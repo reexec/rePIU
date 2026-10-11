@@ -2984,6 +2984,28 @@ buffer remaining after safe pruning counts as `history-overflow`; a request olde
 reported separately as `history-coverage-miss`. `history-pruned` and `history-peak` expose normal
 retirement volume and the actual retained range.
 
+
+### issue #58 PIU10 frame-sync의 tick 시각 응답 / PIU10 frame-sync answered at tick time
+
+PIU10 게임은 타이머 핸들러에서 MP3 frame-sync(0x2DA status bit 2)의 변화를 세어 곡 위치를 정하고, 256프레임마다
+화살표가 읽는 곡 시계를 그 위치로 덮어씁니다. tick이 늦게 몰려 들어가면 핸들러들이 같은 순간의 비트를 읽어 변화
+두 개가 상쇄되므로, frame-sync도 JAMMA 입력과 같은 timeline을 씁니다. `Piu10Mp3AudioOut` 워커가 뒤집은 시각을
+`Piu10FrameSyncHistory`에 기록하고, 상태 읽기는 `JammaInputTimeline::TryReplayTimestamp`가 주는 게스트 시각
+(핸들러 안은 그 tick의 due, 밖은 마지막으로 전달된 tick의 due)에서 `Piu10FrameSyncAnswerClock`이 뒤로 가지 않게
+고정한 시각의 비트로 답합니다. 핸들러 밖 읽기(같은 포트의 CAT702 통신)를 지금 시각으로 답하면 답이 핸들러의
+tick보다 앞서므로 쓰지 않습니다. 답은 이력의 값에서만 나오며(live 비트를 쓰면 뒤집기와 기록 사이의 race로 가짜
+변화가 생김), `REPIU_PIU10_FRAME_SYNC_REPLAY=0`이 이전 동작입니다.
+
+The PIU10 games count MP3 frame-sync changes (0x2DA status bit 2) in their timer handler to know the song position
+and overwrite the song clock the arrows read with it every 256 frames. With ticks arriving late and bunched, handlers
+read the bit at one instant and two changes cancel, so frame-sync uses the JAMMA inputs' timeline as well. The
+`Piu10Mp3AudioOut` worker records each flip in `Piu10FrameSyncHistory`, and a status read is answered with the bit at
+the guest's time from `JammaInputTimeline::TryReplayTimestamp` (the tick's due time inside a handler, the latest
+delivered tick's outside), kept from running backwards by `Piu10FrameSyncAnswerClock`. Reads outside handlers (the
+CAT702 exchange on the same port) are not answered at the present, which would run ahead of the handlers' ticks.
+Answers come from the history alone (the live bit races with the recording of a flip and made phantom changes);
+`REPIU_PIU10_FRAME_SYNC_REPLAY=0` restores the previous behavior.
+
 ## 게스트 위치 census / Guest position census
 
 Task 411은 기본 OFF인 `REPIU_GUEST_POSITION_CENSUS=1|on|true` 계측을 추가합니다.

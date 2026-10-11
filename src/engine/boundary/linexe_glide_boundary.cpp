@@ -9,6 +9,7 @@
 
 #include "repiu/engine/glide_lfb_lock_interval_census.h"
 #include "repiu/engine/glide_lfb_staging_shadow.h"
+#include "repiu/engine/timer_latency_trace.h"
 #include "repiu/hle/glide_texture_decode.h"
 #include "repiu/hle/glide_implementation_issue.h"
 #include "repiu/hle/glide_lfb.h"
@@ -1432,6 +1433,28 @@ bool HandleGlideGateBoundary(repiu::platform::GuestCpuContext* win32_context,
 
     using go = repiu::hle::GlideGateId;
     ordinal_timing_scope.Begin(glide_export->ordinal);
+    // Issue #58: a Glide call that holds the guest thread, where no timer
+    // safe point exists, goes to the timer latency trace.
+    struct TimerTraceGateScope
+    {
+        std::uint64_t begin_ns;
+        std::uint32_t ordinal;
+        ~TimerTraceGateScope()
+        {
+            if (begin_ns == 0U)
+            {
+                return;
+            }
+            const std::uint64_t held = TimerTraceNowNanoseconds() - begin_ns;
+            if (held >= 1000000ULL)
+            {
+                RecordTimerTrace(TimerTraceEvent::kGate, begin_ns, ordinal,
+                                 static_cast<std::uint32_t>(held / 1000U));
+            }
+        }
+    } timer_trace_gate_scope{
+        TimerLatencyTraceEnabled() ? TimerTraceNowNanoseconds() : 0U,
+        glide_export->ordinal};
 
     ++context->glide_gate_entry_count;
     // Task 335: no event pump here. Pumping at gate entry cost a full host-thread
@@ -2674,6 +2697,26 @@ bool HandleGlideGateBoundary(repiu::platform::GuestCpuContext* win32_context,
                 }
                 return ContinueGlideSwapWait(win32_context, context,
                                              return_address);
+            }
+            // Issue #58: the ticks each drawn frame carried, which is how
+            // far the PIU10 arrows move from one frame to the next.
+            if (TimerLatencyTraceEnabled())
+            {
+                RecordTimerTrace(TimerTraceEvent::kSwap,
+                                 TimerTraceNowNanoseconds(), 0U);
+            }
+            if (context->piu10_isa_board_enabled)
+            {
+                context->piu10_song_clock.ObserveSwap(
+                    static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now()
+                                .time_since_epoch())
+                            .count()),
+                    context->timer_tick_delivery.injected_total.load(
+                        std::memory_order_relaxed),
+                    repiu::hle::PitFrequencyHz(
+                        context->pit_channel0.snapshot().divisor));
             }
             // Task 511: the one place the attribution can be read on a host
             // where the guest thread never stops.

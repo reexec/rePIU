@@ -28,6 +28,8 @@
 #include "repiu/engine/pic_timer_in_service.h"
 #include "repiu/engine/timer_return_pad.h"
 #include "repiu/engine/timer_tick_delivery.h"
+#include "repiu/engine/piu10_song_clock_census.h"
+#include "repiu/engine/piu10_frame_sync_history.h"
 #include "repiu/engine/jamma_input_timeline.h"
 #include "repiu/engine/aot_boundary_opcode_census.h"
 #include "repiu/engine/aot_ff_boundary_attribution.h"
@@ -817,6 +819,15 @@ struct ThreadContext
     // Separate ISA16 PIU10 flash/MP3/security board at 0x02D0..0x02DF.
     // This is not the JAMMA/YMZ280B board at 0x02A0..0x02AF.
     Piu10Mp3AudioOut piu10_mp3_audio;
+    // Issue #58. Fed from the guest's MP3 status reads; guest thread only,
+    // except `Summary()`.
+    Piu10SongClockCensus piu10_song_clock;
+    // Issue #58. ESP of the guest instruction reading the PIU10 board, so
+    // the MP3 status source can tell a read inside an injected timer handler
+    // and answer it at that tick's due time; and the policy that keeps the
+    // answered time from running backwards.
+    std::uint32_t piu10_read_guest_esp = 0;
+    Piu10FrameSyncAnswerClock piu10_frame_sync_answer_clock;
     repiu::hle::Piu10IsaBoard piu10_isa_board;
     bool piu10_isa_board_enabled = false;
     std::atomic<std::uint64_t> piu10_mp3_fast_path_write_count{0};

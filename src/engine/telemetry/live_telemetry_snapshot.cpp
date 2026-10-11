@@ -2,6 +2,7 @@
 #include "boundary/timer_interrupt_boundary.h"
 #include "execution/execution_internal.h"
 #include "repiu/runtime/execution_timeout.h"
+#include "repiu/engine/timer_latency_trace.h"
 
 #include <mutex>
 #include <algorithm>
@@ -537,10 +538,19 @@ HostPollOutcome PollThreadUntilExit(const repiu::platform::HostThread& thread,
                     {
                         const std::uint64_t ordinal =
                             due_range.first_tick_ordinal + index;
-                        progress_context->jamma_input_timeline.EnqueueTimerTick(
+                        const std::uint64_t due_ns =
                             event_clock_start + due_range.epoch_nanoseconds +
                             repiu::hle::PitElapsedNanosecondsForTick(
-                                ordinal, due_range.divisor));
+                                ordinal, due_range.divisor);
+                        progress_context->jamma_input_timeline.EnqueueTimerTick(
+                            due_ns);
+                        if (TimerLatencyTraceEnabled())
+                        {
+                            RecordTimerTrace(
+                                TimerTraceEvent::kDue, due_ns,
+                                static_cast<std::uint32_t>(ordinal), 0U,
+                                read_event_clock());
+                        }
                     }
                     progress_context->timer_interrupt_pending.store(
                         true, std::memory_order_release);
@@ -1367,6 +1377,7 @@ void CopyThreadObservationToAttempt(const ThreadContext& context,
     attempt->timer_tick_delivery =
         SnapshotTimerTickDelivery(context.timer_tick_delivery);
     attempt->piu10_mp3_stats = context.piu10_mp3_audio.stats();
+    attempt->piu10_song_clock = context.piu10_song_clock.Summary();
     attempt->pic_timer_in_service = context.pic_timer_in_service;
     attempt->timer_return_pad = context.timer_return_pad;
     attempt->native_fast_path_entry_count =

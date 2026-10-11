@@ -1,4 +1,6 @@
 #include "repiu/engine/piu10_mp3_audio_out.h"
+#include "repiu/engine/timer_latency_trace.h"
+#include "repiu/engine/piu10_frame_sync_history.h"
 
 #include "repiu/sound/decoder_input_fifo.h"
 #include "repiu/sound/mpeg_audio_frame.h"
@@ -90,6 +92,7 @@ struct Piu10Mp3AudioOut::Impl
     std::atomic<std::size_t> decoder_pending_bytes{0};
     std::atomic<int> reported_sample_rate{kDefaultSampleRate};
     std::atomic<int> reported_channels{kDefaultChannels};
+    std::atomic<int> reported_frame_samples{1152};
     std::uint32_t startup_latency_ms = 0U;
     bool startup_latency_pending = true;
     bool stream_audit_enabled = false;
@@ -141,6 +144,10 @@ struct Piu10Mp3AudioOut::Impl
     std::atomic<std::int64_t> last_toggle_us{0};
     std::atomic<std::uint64_t> toggle_seq{0};
     mutable std::uint8_t last_seen_sync = 0xFFU;
+    mutable std::uint8_t trace_last_seen_sync = 0xFFU;
+    // Issue #58: when the bit flipped, for reads answered at a tick's due
+    // time. Written by the worker, read by the guest thread.
+    Piu10FrameSyncHistory frame_sync_history;
     mutable std::uint64_t reads_since_seen = 0U;
     std::string message;
 
@@ -255,9 +262,20 @@ struct Piu10Mp3AudioOut::Impl
                frame_start_pcm_offsets.front() <= position)
         {
             const std::uint64_t frame_start = frame_start_pcm_offsets.front();
-            frame_sync.fetch_xor(1U, std::memory_order_relaxed);
+            const std::uint8_t flipped = static_cast<std::uint8_t>(
+                frame_sync.fetch_xor(1U, std::memory_order_relaxed) ^ 1U);
+            const std::uint64_t flip_ns = TimerTraceNowNanoseconds();
+            frame_sync_history.Record(flip_ns, flipped);
             frame_start_pcm_offsets.pop_front();
             ++toggles;
+            if (TimerLatencyTraceEnabled())
+            {
+                RecordTimerTrace(
+                    TimerTraceEvent::kToggle, flip_ns,
+                    static_cast<std::uint32_t>(
+                        sync_toggles.load(std::memory_order_relaxed) +
+                        toggles));
+            }
             if (position_trace)
             {
                 const std::int64_t now_us = TraceMicroseconds();
@@ -355,6 +373,7 @@ struct Piu10Mp3AudioOut::Impl
             reported_channels.store(info.channels, std::memory_order_relaxed);
             reported_sample_rate.store(info.hz, std::memory_order_relaxed);
         }
+        reported_frame_samples.store(samples, std::memory_order_relaxed);
         const int pcm_bytes = samples * info.channels *
             static_cast<int>(sizeof(mp3d_sample_t));
         if (startup_latency_pending)
@@ -827,8 +846,28 @@ bool Piu10Mp3AudioOut::demand() const
 
 std::uint8_t Piu10Mp3AudioOut::frame_sync() const
 {
-    const std::uint8_t value =
-        impl_->frame_sync.load(std::memory_order_relaxed);
+    return NoteGuestFrameSyncRead(
+        impl_->frame_sync.load(std::memory_order_relaxed),
+        TimerTraceNowNanoseconds());
+}
+
+std::uint8_t Piu10Mp3AudioOut::FrameSyncAt(std::uint64_t time_ns) const
+{
+    return NoteGuestFrameSyncRead(
+        impl_->frame_sync_history.ValueAt(
+            time_ns, impl_->frame_sync.load(std::memory_order_relaxed)),
+        time_ns);
+}
+
+std::uint8_t Piu10Mp3AudioOut::NoteGuestFrameSyncRead(
+    std::uint8_t value, std::uint64_t answer_ns) const
+{
+    if (TimerLatencyTraceEnabled() && value != impl_->trace_last_seen_sync)
+    {
+        impl_->trace_last_seen_sync = value;
+        RecordTimerTrace(TimerTraceEvent::kSeen, TimerTraceNowNanoseconds(),
+                         value, 0U, answer_ns);
+    }
     if (impl_->position_trace)
     {
         ++impl_->reads_since_seen;
@@ -850,6 +889,15 @@ std::uint8_t Piu10Mp3AudioOut::frame_sync() const
         }
     }
     return value;
+}
+
+double Piu10Mp3AudioOut::frame_seconds() const
+{
+    const int rate =
+        impl_->reported_sample_rate.load(std::memory_order_relaxed);
+    const int samples =
+        impl_->reported_frame_samples.load(std::memory_order_relaxed);
+    return rate > 0 ? static_cast<double>(samples) / rate : 0.0;
 }
 
 Piu10Mp3AudioStats Piu10Mp3AudioOut::stats() const

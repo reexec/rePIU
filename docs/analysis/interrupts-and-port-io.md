@@ -992,3 +992,52 @@ loop. Neither function checks Ctrl-C (INT 23h). Both are also on the delegating 
 
 **Unresolved:** whether the game sets an INT 23h vector was not checked, nor whether anything outside
 the fatal screen calls this service (Task 528's AH census showed `AH=08h` only on the fatal path).
+
+## 2026-10-11 issue #58: INT 8 재현의 한계 — tick이 프레임당 한 번 몰려 들어간다
+
+**측정 도구:** `REPIU_TIMER_LATENCY_TRACE=<path>`가 tick마다 due 시각·arm 시각·주입 시각과 그 사이의 주입 거부
+사유, 1 ms 이상 게스트 스레드를 붙잡은 Glide 호출, 0.5 ms 이상의 INT 21h, MP3 토글과 게스트 관측, 스왑을 같은
+steady 시계로 기록한다(`timer_latency_trace.h`).
+
+**확인됨 (Win32 Release, 실제 vsync 60 Hz, pumpipx3 자동 플레이 300초):**
+
+* tick 지연(due → 주입) 중앙값은 8–16 ms 구간이다. 거의 전부가 **arm 지연**(p50 6.05, p90 13.2, p99 15.2 ms)이고,
+  arm 뒤 주입까지는 p50 0.23 ms, p90 0.59 ms다. PIT 스케줄은 호스트 폴 루프에서 돌고, 그 스레드가 vsync
+  present도 실행하므로 present가 막힌 동안 due tick이 등록되지 않는다.
+* 같은 동안 게스트 스레드는 Glide 게이트에서 present를 기다린다. 1 ms 넘게 막힌 호출의 합은 grBufferSwap 110 s
+  (중앙값 15.4 ms), grTexDownloadTable 100 s(13.5 ms), grTexSource 25 s(15.4 ms)로, 프레임 16.7 ms 가운데 약 14 ms다.
+  스왑 대기 중 주입은 direct 모델에서 50 ms 보류(#6)라 0회였고, 텍스처 호출의 대기에는 그런 경로가 없다.
+* 결과: 1 ms 안에 연달아 들어간 주입 묶음은 4개짜리가 9,915번으로 가장 많다. 게스트 ISR은 240 Hz가 아니라
+  **사실상 60 Hz로, 4번을 같은 순간에** 실행되며 그때마다 장치를 "지금" 값으로 읽는다.
+* JAMMA 입력은 ISR마다 그 tick의 due 시각 상태로 답하지만(Task 492/493), PIU10 MP3 frame-sync는 그렇지 않다.
+  토글 간격 26.1 ms에 표본 간격 16.7 ms라 여유가 작고, 프레임 하나가 26 ms를 넘으면 토글 두 개가 상쇄될 수 있다.
+
+**비교 (Linux x64, WSL, vsync 거부로 페이서 사용):** arm 지연 p50 0.23 ms, p90 0.54 ms, tick 지연 1 ms 미만 96%,
+스왑 대기 중 주입 43,654회. present가 오래 막히지 않고 스왑 대기에서도 arm과 주입을 한다. WSL에서는 MP3 재생이
+진행되지 않아 토글 쪽은 비교하지 못했다.
+
+**미확정:** 실제 vsync를 쓰는 Linux 실기에서 텍스처 호출 대기가 얼마나 tick을 막는지.
+
+### English
+
+**Instrument:** `REPIU_TIMER_LATENCY_TRACE=<path>` records, on the steady clock, each tick's due, arm and
+injection times with the injection refusals in between, Glide calls holding the guest thread 1 ms or more, INT 21h
+services of 0.5 ms or more, MP3 toggles and the guest's observations of them, and swaps (`timer_latency_trace.h`).
+
+**Confirmed (Win32 Release, real vsync at 60 Hz, a 300-second pumpipx3 automated play):** tick latency (due to
+injection) has its median in the 8–16 ms bucket, almost all of it **arming lateness** (p50 6.05, p90 13.2, p99 15.2
+ms); arming to injection is p50 0.23 ms, p90 0.59 ms. The PIT schedule runs in the host poll loop, which also runs
+the vsync present, so no due tick is registered while the present blocks. Meanwhile the guest thread waits for that
+present in the Glide gate: calls held over 1 ms total grBufferSwap 110 s (median 15.4 ms), grTexDownloadTable 100 s
+(13.5 ms), grTexSource 25 s (15.4 ms), about 14 ms of every 16.7 ms frame. Swap-wait injection is held for 50 ms on
+the direct model (#6), so it made none, and texture calls have no such path. Injections arriving within 1 ms of each
+other come most often in fours (9,915 bursts): the guest ISR runs **effectively at 60 Hz, four times at one instant**,
+reading devices as they are now. JAMMA input answers each ISR with the state at that tick's due time (Tasks
+492/493); the PIU10 MP3 frame-sync does not. With toggles 26.1 ms apart and samples 16.7 ms apart the margin is small,
+and any frame over 26 ms can let two toggles cancel.
+
+**Comparison (Linux x64 on WSL, vsync refused so the pacer runs):** arming lateness p50 0.23 ms, p90 0.54 ms, 96% of
+ticks within 1 ms, 43,654 swap-wait injections: the present does not block long, and the swap wait arms and
+injects. MP3 playback did not advance on WSL, so the toggles could not be compared.
+
+**Unresolved:** how much texture-call waits hold ticks on Linux hardware with real vsync.

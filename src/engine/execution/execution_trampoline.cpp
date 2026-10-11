@@ -15,6 +15,9 @@
 #include "repiu/platform/host_fault_report.h"
 #include "execution_trampoline_model.h"
 #include "repiu/runtime/execution_model.h"
+#include "repiu/runtime/env_toggle.h"
+#include "repiu/engine/timer_latency_trace.h"
+#include "repiu/engine/event_clock.h"
 #include "repiu/runtime/execution_timeout.h"
 #include "repiu/runtime/timer_safe_point_injection.h"
 #include "repiu/runtime/aot_long_mode_compatibility.h"
@@ -42,6 +45,8 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <optional>
 #include <cstdlib>
@@ -4023,6 +4028,17 @@ bool TimerHandlerCacheEntryEnabled()
     return enabled;
 }
 
+// Task 366 counts the deferral; issue #58 also records which check made it.
+void DeferTimerTick(ThreadContext* context, TimerDeferReason reason)
+{
+    RecordTimerTickDeferred(&context->timer_tick_delivery);
+    if (TimerLatencyTraceEnabled())
+    {
+        RecordTimerTrace(TimerTraceEvent::kDefer, TimerTraceNowNanoseconds(),
+                         static_cast<std::uint32_t>(reason));
+    }
+}
+
 }  // namespace
 
 std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_context,
@@ -4065,13 +4081,13 @@ std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_co
     if (!IsGuestInstructionPointer(context, static_cast<std::uint32_t>(win32_context->Eip)) &&
         !IsAotCacheAddress(context, static_cast<std::uint32_t>(win32_context->Eip)))
     {
-        RecordTimerTickDeferred(&context->timer_tick_delivery);
+        DeferTimerTick(context, TimerDeferReason::kNotGuestCode);
         return 0U;
     }
 
     if ((win32_context->EFlags & kEFlagsInterruptEnable) == 0U)
     {
-        RecordTimerTickDeferred(&context->timer_tick_delivery);
+        DeferTimerTick(context, TimerDeferReason::kInterruptFlag);
         return 0U;
     }
 
@@ -4081,7 +4097,7 @@ std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_co
         GuestCliBlocksInjection(&context->pic_timer_in_service,
                                 GuestCliHoldClockNanoseconds()))
     {
-        RecordTimerTickDeferred(&context->timer_tick_delivery);
+        DeferTimerTick(context, TimerDeferReason::kGuestCli);
         return 0U;
     }
 
@@ -4096,7 +4112,7 @@ std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_co
                                 static_cast<std::uint32_t>(win32_context->Esp),
                                 at_sti))
     {
-        RecordTimerTickDeferred(&context->timer_tick_delivery);
+        DeferTimerTick(context, TimerDeferReason::kInService);
         return 0U;
     }
 
@@ -4111,7 +4127,7 @@ std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_co
                                        GuestCliHoldClockNanoseconds(),
                                        tick_period_ns))
     {
-        RecordTimerTickDeferred(&context->timer_tick_delivery);
+        DeferTimerTick(context, TimerDeferReason::kPostReturnChain);
         return 0U;
     }
 
@@ -4158,7 +4174,7 @@ std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_co
             if (!FindAotGuestAddress(*context->aot_placement, eip,
                                      &guest_address))
             {
-                RecordTimerTickDeferred(&context->timer_tick_delivery);
+                DeferTimerTick(context, TimerDeferReason::kCacheAddress);
                 return 0U;
             }
             eip = guest_address;
@@ -4167,14 +4183,14 @@ std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_co
         if (!runtime::FindSelectorForLinearAddress(
                 context->selector_table, eip, &logical_cs))
         {
-            RecordTimerTickDeferred(&context->timer_tick_delivery);
+            DeferTimerTick(context, TimerDeferReason::kSelector);
             return 0U;
         }
         const runtime::GuestDescriptor* const code_descriptor =
             runtime::FindDescriptor(context->selector_table, logical_cs);
         if (code_descriptor == nullptr || !code_descriptor->executable)
         {
-            RecordTimerTickDeferred(&context->timer_tick_delivery);
+            DeferTimerTick(context, TimerDeferReason::kSelector);
             return 0U;
         }
         segcs = logical_cs;
@@ -4209,8 +4225,14 @@ std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_co
                          at_sti);
     NoteTimerInjectionTime(&context->pic_timer_in_service,
                            GuestCliHoldClockNanoseconds());
+    std::uint64_t tick_due_ns = 0U;
     context->jamma_input_timeline.BeginTimerInterrupt(
-        win32_context->Esp, interrupt_frame_esp, eip);
+        win32_context->Esp, interrupt_frame_esp, eip, &tick_due_ns);
+    if (TimerLatencyTraceEnabled())
+    {
+        RecordTimerTrace(TimerTraceEvent::kInject, TimerTraceNowNanoseconds(),
+                         eip, at_sti ? 1U : 0U, tick_due_ns);
+    }
     context->timer_interrupt_pending.store(keep_armed,
                                            std::memory_order_relaxed);
     timer_guard.Release();
@@ -6694,9 +6716,83 @@ bool RunExecutionThread(
                 [&context](std::uint8_t value) {
                     context.piu10_mp3_audio.WriteByte(value);
                 });
+            // Issue #58. Every status read also feeds the song clock
+            // census, which replays the game's overwrite of its song clock
+            // and reports how far the arrows jump at each one.
+            // `REPIU_PIU10_SONG_CLOCK_LOG=1` prints every overwrite; jumps
+            // of `kPiu10SongClockReportJumpMs` or more are printed anyway.
+            static const bool song_clock_log = repiu::runtime::
+                ResolveOptInToggle(std::getenv("REPIU_PIU10_SONG_CLOCK_LOG"));
+            // Issue #58. A read inside an injected timer handler gets the
+            // frame-sync bit as it was at that tick's due time, as the JAMMA
+            // inputs do (see piu10_frame_sync_history.h). The flips are
+            // stamped on the steady clock, so the replay needs the tick
+            // schedule on it too. `REPIU_PIU10_FRAME_SYNC_REPLAY=0` answers
+            // every read with the bit as it is now, as before.
+            static const bool frame_sync_replay =
+                repiu::runtime::ResolvePromotedToggle(
+                    std::getenv("REPIU_PIU10_FRAME_SYNC_REPLAY")) &&
+                ResolveEventClockUsesSteady(std::getenv("REPIU_EVENT_CLOCK"));
             context.piu10_isa_board.SetMp3StatusSource([&context]() {
+                const std::uint64_t now_ns = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count());
+                std::uint8_t frame_sync = 0U;
+                std::uint64_t answer_ns = now_ns;
+                bool in_handler = false;
+                if (frame_sync_replay)
+                {
+                    std::uint64_t guest_ns = 0U;
+                    in_handler =
+                        context.jamma_input_timeline.TryReplayTimestamp(
+                            context.piu10_read_guest_esp, &guest_ns);
+                    answer_ns = context.piu10_frame_sync_answer_clock.Answer(
+                        guest_ns, now_ns);
+                    frame_sync = context.piu10_mp3_audio.FrameSyncAt(answer_ns);
+                }
+                else
+                {
+                    frame_sync = context.piu10_mp3_audio.frame_sync();
+                }
+                if (TimerLatencyTraceEnabled())
+                {
+                    RecordTimerTrace(TimerTraceEvent::kStatusRead, now_ns,
+                                     frame_sync, in_handler ? 1U : 0U,
+                                     answer_ns);
+                }
+                Piu10SongClockRead read;
+                read.now_ns = now_ns;
+                read.frame_sync = frame_sync;
+                read.ticks_injected =
+                    context.timer_tick_delivery.injected_total.load(
+                        std::memory_order_relaxed);
+                read.ticks_dropped =
+                    context.timer_tick_delivery.dropped_total.load(
+                        std::memory_order_relaxed);
+                read.pit_hz = repiu::hle::PitFrequencyHz(
+                    context.pit_channel0.snapshot().divisor);
+                read.frame_seconds = context.piu10_mp3_audio.frame_seconds();
+                Piu10SongClockResync resync;
+                if (context.piu10_song_clock.Observe(read, &resync) &&
+                    (song_clock_log ||
+                     std::fabs(resync.jump_ms) >=
+                         kPiu10SongClockReportJumpMs))
+                {
+                    std::fprintf(
+                        stderr,
+                        "[repiu-song-clock] song=%u frame=%u jump_ms=%+.1f "
+                        "ticks=%u dropped=%u window_ms=%.1f audio_ms=%.1f "
+                        "tick_gap_max_ms=%.1f tick_burst=%u "
+                        "toggle_gap_max_ms=%.1f frames=%u uneven=%u\n",
+                        resync.song, resync.frame, resync.jump_ms,
+                        resync.ticks, resync.dropped, resync.window_ms,
+                        resync.audio_ms, resync.tick_gap_max_ms,
+                        resync.tick_burst_max, resync.toggle_gap_max_ms,
+                        resync.frames, resync.uneven_frames);
+                }
                 return static_cast<std::uint8_t>(
-                    (context.piu10_mp3_audio.frame_sync() << 2U) |
+                    (frame_sync << 2U) |
                     (context.piu10_mp3_audio.demand() ? 1U : 0U));
             });
             std::fprintf(stderr, "[repiu-piu10] %s; %s; %s\n",

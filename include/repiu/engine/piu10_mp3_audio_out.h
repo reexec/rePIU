@@ -90,11 +90,21 @@ public:
     bool available() const;
     bool demand() const;
     std::uint8_t frame_sync() const;
+    // Issue #58. The frame-sync bit as it was at `time_ns` (steady clock),
+    // for a read inside an injected timer handler; see
+    // piu10_frame_sync_history.h.
+    std::uint8_t FrameSyncAt(std::uint64_t time_ns) const;
+    // Issue #58. Seconds of audio in the latest decoded frame; 1152 / 44100
+    // before the first one.
+    double frame_seconds() const;
     Piu10Mp3AudioStats stats() const;
     Piu10Mp3AudioSnapshot Snapshot() const;
     const std::string& message() const;
 
 private:
+    std::uint8_t NoteGuestFrameSyncRead(std::uint8_t value,
+                                        std::uint64_t answer_ns) const;
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

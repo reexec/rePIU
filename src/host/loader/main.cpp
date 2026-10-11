@@ -11,6 +11,7 @@
 #include <SDL3/SDL_error.h>
 #include "repiu/engine/eeprom_backing_path.h"
 #include "repiu/engine/execution_trampoline.h"
+#include "repiu/engine/timer_latency_trace.h"
 #include "repiu/engine/final_execution_report.h"
 #include "repiu/engine/session_display_preferences.h"
 #include "repiu/platform/build_identity.h"
@@ -3200,6 +3201,25 @@ void PrintExecutionAttempt(
             mp3.starvation_events, mp3.sync_toggles,
             mp3.sync_multi_toggle_events, mp3.pcm_empty_events,
             mp3.pcm_queued_low_water_bytes, mp3.device_buffer_frames);
+        // Issue #58: the guest thread has stopped, so the trace is complete.
+        repiu::engine::WriteTimerLatencyTrace();
+        // Issue #58: how far the arrows moved at the song clock overwrites.
+        const auto& song_clock = attempt.piu10_song_clock;
+        logger.info(
+            "PIU10 song clock songs/resyncs/jumps-over-{:.0f}ms/"
+            "max-ahead-ms/max-back-ms/max-tick-gap-ms/max-toggle-gap-ms: "
+            "{}/{}/{}/{:.1f}/{:.1f}/{:.1f}/{:.1f}",
+            repiu::engine::kPiu10SongClockReportJumpMs, song_clock.songs,
+            song_clock.resyncs, song_clock.jumps_over_report,
+            song_clock.jump_max_ahead_ms, song_clock.jump_max_back_ms,
+            song_clock.tick_gap_max_ms, song_clock.toggle_gap_max_ms);
+        const auto& frame_ticks = song_clock.frame_ticks;
+        logger.info(
+            "PIU10 song frame ticks 0/1/2/3/4/5/6/7/8/9+: "
+            "{}/{}/{}/{}/{}/{}/{}/{}/{}/{}",
+            frame_ticks[0], frame_ticks[1], frame_ticks[2], frame_ticks[3],
+            frame_ticks[4], frame_ticks[5], frame_ticks[6], frame_ticks[7],
+            frame_ticks[8], frame_ticks[9]);
         const auto& in_service = attempt.pic_timer_in_service;
         logger.info(
             "timer IRQ0 in-service blocked/sti-delivered/sti-chain-blocked/"

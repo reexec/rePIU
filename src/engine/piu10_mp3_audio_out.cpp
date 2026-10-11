@@ -90,6 +90,7 @@ struct Piu10Mp3AudioOut::Impl
     std::atomic<std::size_t> decoder_pending_bytes{0};
     std::atomic<int> reported_sample_rate{kDefaultSampleRate};
     std::atomic<int> reported_channels{kDefaultChannels};
+    std::atomic<int> reported_frame_samples{1152};
     std::uint32_t startup_latency_ms = 0U;
     bool startup_latency_pending = true;
     bool stream_audit_enabled = false;
@@ -355,6 +356,7 @@ struct Piu10Mp3AudioOut::Impl
             reported_channels.store(info.channels, std::memory_order_relaxed);
             reported_sample_rate.store(info.hz, std::memory_order_relaxed);
         }
+        reported_frame_samples.store(samples, std::memory_order_relaxed);
         const int pcm_bytes = samples * info.channels *
             static_cast<int>(sizeof(mp3d_sample_t));
         if (startup_latency_pending)
@@ -850,6 +852,15 @@ std::uint8_t Piu10Mp3AudioOut::frame_sync() const
         }
     }
     return value;
+}
+
+double Piu10Mp3AudioOut::frame_seconds() const
+{
+    const int rate =
+        impl_->reported_sample_rate.load(std::memory_order_relaxed);
+    const int samples =
+        impl_->reported_frame_samples.load(std::memory_order_relaxed);
+    return rate > 0 ? static_cast<double>(samples) / rate : 0.0;
 }
 
 Piu10Mp3AudioStats Piu10Mp3AudioOut::stats() const

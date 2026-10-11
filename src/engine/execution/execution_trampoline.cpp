@@ -15,6 +15,7 @@
 #include "repiu/platform/host_fault_report.h"
 #include "execution_trampoline_model.h"
 #include "repiu/runtime/execution_model.h"
+#include "repiu/runtime/env_toggle.h"
 #include "repiu/runtime/execution_timeout.h"
 #include "repiu/runtime/timer_safe_point_injection.h"
 #include "repiu/runtime/aot_long_mode_compatibility.h"
@@ -42,6 +43,8 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <optional>
 #include <cstdlib>
@@ -6694,9 +6697,51 @@ bool RunExecutionThread(
                 [&context](std::uint8_t value) {
                     context.piu10_mp3_audio.WriteByte(value);
                 });
+            // Issue #58. Every status read also feeds the song clock
+            // census, which replays the game's overwrite of its song clock
+            // and reports how far the arrows jump at each one.
+            // `REPIU_PIU10_SONG_CLOCK_LOG=1` prints every overwrite; jumps
+            // of `kPiu10SongClockReportJumpMs` or more are printed anyway.
+            static const bool song_clock_log = repiu::runtime::
+                ResolveOptInToggle(std::getenv("REPIU_PIU10_SONG_CLOCK_LOG"));
             context.piu10_isa_board.SetMp3StatusSource([&context]() {
+                const std::uint8_t frame_sync =
+                    context.piu10_mp3_audio.frame_sync();
+                Piu10SongClockRead read;
+                read.now_ns = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count());
+                read.frame_sync = frame_sync;
+                read.ticks_injected =
+                    context.timer_tick_delivery.injected_total.load(
+                        std::memory_order_relaxed);
+                read.ticks_dropped =
+                    context.timer_tick_delivery.dropped_total.load(
+                        std::memory_order_relaxed);
+                read.pit_hz = repiu::hle::PitFrequencyHz(
+                    context.pit_channel0.snapshot().divisor);
+                read.frame_seconds = context.piu10_mp3_audio.frame_seconds();
+                Piu10SongClockResync resync;
+                if (context.piu10_song_clock.Observe(read, &resync) &&
+                    (song_clock_log ||
+                     std::fabs(resync.jump_ms) >=
+                         kPiu10SongClockReportJumpMs))
+                {
+                    std::fprintf(
+                        stderr,
+                        "[repiu-song-clock] song=%u frame=%u jump_ms=%+.1f "
+                        "ticks=%u dropped=%u window_ms=%.1f audio_ms=%.1f "
+                        "tick_gap_max_ms=%.1f tick_burst=%u "
+                        "toggle_gap_max_ms=%.1f frames=%u uneven=%u\n",
+                        resync.song, resync.frame, resync.jump_ms,
+                        resync.ticks, resync.dropped, resync.window_ms,
+                        resync.audio_ms, resync.tick_gap_max_ms,
+                        resync.tick_burst_max, resync.toggle_gap_max_ms,
+                        resync.frames, resync.uneven_frames);
+                }
                 return static_cast<std::uint8_t>(
-                    (context.piu10_mp3_audio.frame_sync() << 2U) |
+                    (frame_sync << 2U) |
                     (context.piu10_mp3_audio.demand() ? 1U : 0U));
             });
             std::fprintf(stderr, "[repiu-piu10] %s; %s; %s\n",

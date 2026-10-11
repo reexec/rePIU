@@ -90,6 +90,9 @@ public:
     bool available() const;
     bool demand() const;
     std::uint8_t frame_sync() const;
+    // Issue #58. Seconds of audio in the latest decoded frame; 1152 / 44100
+    // before the first one.
+    double frame_seconds() const;
     Piu10Mp3AudioStats stats() const;
     Piu10Mp3AudioSnapshot Snapshot() const;
     const std::string& message() const;

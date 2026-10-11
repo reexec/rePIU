@@ -2675,6 +2675,21 @@ bool HandleGlideGateBoundary(repiu::platform::GuestCpuContext* win32_context,
                 return ContinueGlideSwapWait(win32_context, context,
                                              return_address);
             }
+            // Issue #58: the ticks each drawn frame carried, which is how
+            // far the PIU10 arrows move from one frame to the next.
+            if (context->piu10_isa_board_enabled)
+            {
+                context->piu10_song_clock.ObserveSwap(
+                    static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now()
+                                .time_since_epoch())
+                            .count()),
+                    context->timer_tick_delivery.injected_total.load(
+                        std::memory_order_relaxed),
+                    repiu::hle::PitFrequencyHz(
+                        context->pit_channel0.snapshot().divisor));
+            }
             // Task 511: the one place the attribution can be read on a host
             // where the guest thread never stops.
             //

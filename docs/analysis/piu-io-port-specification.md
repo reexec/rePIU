@@ -1343,3 +1343,61 @@ multi-toggles, starvation, empty queue and clock lag.
 
 **Unresolved:** The noise on the user's host did not reproduce on WSLg; the PCM queue never fell below
 235 ms mid-song.
+
+## 22. PIU10 곡 시계와 MP3 위치 덮어쓰기 (issue #58)
+
+**확인됨 (pumpipx3 PIU.EXE, object 2 런타임 base 0x04010000):**
+
+* 타이머 ISR 본체 `0x0401213D`는 tick마다 `[0x92aaf8]`(곡 시계)를 1 올리고 MP3 공급 함수 `0x0402D86B`를 부른다.
+* 공급 함수는 0x2DA status를 읽어 bit 2(frame-sync)가 직전 값(`[0x9acf44]`)과 다르면 MP3 프레임 수
+  `[0x9acf2c]`를 1 올리고, **프레임 수가 256의 배수가 되면 곡 시계를 `round(프레임 수 × 6.2688)`로 덮어쓴다**
+  (setter `0x040121CD`, 상수는 object 4 + `0x180D`의 float). 이어 bit 0(demand)이면 bit 1(send-ready)을
+  기다리며 바이트를 보낸다.
+* 화살표는 getter `0x040121DD`로 곡 시계를 읽는다. 6.2688은 240 Hz × 1152/44100(= 6.2694)에 가까운 값이다.
+* 0x2DA 접근은 공용 `inpw` `0x040FC0A1`/`outpw` `0x040FC0AA`를 거친다.
+
+따라서 화살표는 평소 tick으로 진행하고 약 6.7초마다 MP3 위치로 끌려간다. 게임은 4 ms마다 도는 ISR이 26 ms
+간격의 frame-sync 변화를 하나도 놓치지 않는다고 가정한다. **tick이 26 ms 넘게 끊기면 그 사이 토글 두 개가
+상쇄되어 게임의 프레임 수가 2프레임(52 ms) 영구히 뒤처지고**, 다음 덮어쓰기에서 화살표가 그만큼 뒤로 가며 그
+곡이 끝날 때까지 음악보다 늦다.
+
+**측정 (Win32 Release, vsync, 60 Hz, 자동 플레이로 스테이지 821번 곡 두 번, 진단 `Piu10SongClockCensus`):**
+
+| 실행 | 스테이지 덮어쓰기 점프 | 토글 손실 | 긴 present(>25 ms) |
+|---|---|---|---|
+| 창 캡처(PrintWindow 5초 간격) 동시 | −194.6 ~ +5.4 ms, 8 ms 이상 8회 | 16건(스테이지 안 6건) | 24 |
+| 캡처 없음 | −15.4 ~ +5.4 ms | 4건, 모두 스테이지 밖 곡 전환 로딩 | 7 |
+
+* 캡처 없는 스테이지의 ±5~15 ms는 Win32에서 vsync 대기 중 tick이 멈춰(스왑 대기 주입은 direct 모델에서
+  유보, #6) 게스트가 토글을 0–16 ms 늦게 보는 양자화다. 프레임당 tick은 87%가 4, 0–2는 0.5%, 6 이상은 0.2%.
+* 토글 손실의 두 경로: present가 vsync 여러 주기 막힘(캡처 등 외부 요인), 곡 전환 로딩에서 게스트 390–480 ms.
+
+**미확정:** 사용자 환경(Linux 실기, 스팀덱, 고주사율 모니터, 녹화 도구)에서 어느 경로가 나오는지. 60 Hz가
+아닌 화면에서는 vsync로 게임이 그 주사율로 돌아 프레임당 tick이 정수가 아니게 된다(144 Hz면 1.67).
+
+### English
+
+**Confirmed (pumpipx3 PIU.EXE, object 2 at runtime base 0x04010000):** the timer ISR body `0x0401213D` adds one
+to the song clock `[0x92aaf8]` on every tick and calls the MP3 feeder `0x0402D86B`. The feeder reads the 0x2DA
+status; when bit 2 (frame-sync) differs from its previous value (`[0x9acf44]`) it adds one to the MP3 frame count
+`[0x9acf2c]`, and **when that count reaches a multiple of 256 it overwrites the song clock with `round(frames ×
+6.2688)`** (setter `0x040121CD`, the float at object 4 + `0x180D`); then, while bit 0 (demand) is set, it waits for
+bit 1 (send-ready) and sends bytes. The arrows read the song clock through the getter `0x040121DD`. 6.2688 is close
+to 240 Hz × 1152/44100 (6.2694). Port 0x2DA goes through the shared `inpw` `0x040FC0A1` / `outpw` `0x040FC0AA`.
+
+The arrows therefore run on ticks and are pulled to the MP3 position about every 6.7 s. The game assumes its 4 ms
+ISR never misses a frame-sync change 26 ms apart. **When ticks stop for more than 26 ms, two toggles cancel and the
+game's frame count falls two frames (52 ms) behind for good**: the next overwrite moves the arrows back by that much
+and they stay behind the music for the rest of the song.
+
+**Measured (Win32 Release, vsync, 60 Hz, an automated play through stage song 821 twice, `Piu10SongClockCensus`):**
+with a window capture (PrintWindow every 5 s) running, stage overwrites ranged −194.6 to +5.4 ms with eight of 8 ms
+or more, 16 lost-toggle events (six inside the stages) and 24 presents over 25 ms; without it, −15.4 to +5.4 ms, four
+lost-toggle events all in song changes outside the stages, seven long presents. The ±5–15 ms is the observation
+quantization of Win32, whose vsync wait carries no ticks (swap-wait injection is held back on the direct model, #6);
+87% of frames carry four ticks, 0.5% zero to two, 0.2% six or more. The two loss paths are a present blocked over
+several vsync periods (an outside cause such as the capture) and song-change loads of 390–480 ms in the guest.
+
+**Unresolved:** which path the user's setups hit (Linux hardware, the Steam Deck, high-refresh screens, recording
+tools). On a screen other than 60 Hz the game runs at that rate under vsync, so a frame no longer carries a whole
+number of ticks (1.67 at 144 Hz).

@@ -31,6 +31,7 @@
 #include "repiu/engine/glide_setter_state_cache.h"
 #include "repiu/engine/pic_timer_in_service.h"
 #include "repiu/engine/timer_return_pad.h"
+#include "repiu/engine/piu10_song_clock_census.h"
 #include "repiu/engine/timer_tick_delivery.h"
 #include "repiu/engine/piu10_mp3_audio_out.h"
 #include "repiu/engine/aot_boundary_opcode_census.h"
@@ -727,6 +728,8 @@ struct MinimalExecutionAttempt
     TimerTickDeliverySnapshot timer_tick_delivery;
     // Task 740. Read after the guest thread stops.
     Piu10Mp3AudioStats piu10_mp3_stats;
+    // Issue #58: the arrow jumps at each song clock overwrite.
+    Piu10SongClockSummary piu10_song_clock;
     // Task 735. Read after the guest thread stops, so a plain copy.
     PicTimerInService pic_timer_in_service;
     // Task 762. Likewise.

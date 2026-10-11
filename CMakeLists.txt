@@ -389,6 +389,7 @@ target_sources(repiu_exe
         src/engine/telemetry/glide_setter_state_cache.cpp
         src/engine/telemetry/glide_setter_phase_timing.cpp
         src/engine/telemetry/timer_tick_delivery.cpp
+        src/engine/telemetry/piu10_song_clock_census.cpp
         src/engine/telemetry/guest_address_watch.cpp
         src/engine/telemetry/guest_write_trace.cpp
         src/engine/telemetry/fault_exit_trace.cpp
@@ -835,6 +836,7 @@ add_executable(repiu_core_probe
     src/tools/aot_probe/nvram_path_probe.cpp
     src/tools/aot_probe/pit_timer_probe.cpp
     src/tools/aot_probe/event_clock_probe.cpp
+    src/tools/aot_probe/piu10_song_clock_census_probe.cpp
     src/tools/aot_probe/segment_push_probe.cpp
     src/engine/telemetry/final_execution_report.cpp
     src/engine/telemetry/linux_x64_transfer_failure_provenance.cpp

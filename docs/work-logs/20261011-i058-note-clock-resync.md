@@ -84,7 +84,19 @@ fps가 38–62로 출렁였다. 게스트만이 아니라 호스트 스레드까
 검증: Win32 Release `repiu`·`repiu_core_probe`·`repiu_aot_probe` 빌드, core probe `core_probe_all=true`
 (`piu10_frame_sync_history_probe=true`), `repiu_aot_probe --jamma-input-timeline` true, Linux x64 Release 빌드와 core probe(WSL) `core_probe_all=true`.
 
+## 사용자 플레이 확인과 이력 race 수정
+
+사용자가 이 PC(Win32, 전체 화면, 실제 패드)에서 8곡을 플레이했다. 덮어쓰기 47회 중 46회가 +1.1 또는 −2.9 ms였고,
+한 번 +55.3 ms였다. 트레이스에서 그 창의 상태 읽기 하나가 토글과 같은 순간(352.613048초)에 0→1→0으로 답한 것을
+찾았다: 워커가 live 비트를 먼저 뒤집고 이력에 기록하는 사이에 읽으면, 이력에 새 토글이 없어 이미 뒤집힌 live 값을
+돌려줬다(가짜 변화 2개, 다음 창에서 토글 2개 상쇄로 복구). 이력이 있으면 live 대신 이력의 마지막 값으로 답하게
+고쳤고 probe에 그 경우를 넣었다. 사용자 판단: 이 정도면 잘 된다, 남은 것은 기록하고 머지·릴리스. 수정 뒤 같은 자동 플레이(play11, 300초, 캡처 없음)에서
+덮어쓰기 21회가 모두 +1.1 또는 −2.9 ms였고, Win32·Linux x64 core probe가 통과했다.
+
 ## 남은 것
+
+이어서 할 항목은 [#59](https://github.com/reexec/rePIU/issues/59)로 옮겼다.
+
 
 * B와 C: tick 스케줄을 present와 분리하고, 모든 게이트 대기 중에 tick을 주입한다. #6의 프레임 15% 비용 원인부터.
 * 스테이지 중 게스트 정지(440 ms, fps 38)의 원인과, 267 ms 넘는 정지의 tick 폐기(backlog 64).
@@ -180,7 +192,20 @@ apart and fps swung between 38 and 62 for a few seconds: a stall that held the h
 Verification: Win32 Release `repiu`, `repiu_core_probe` and `repiu_aot_probe` builds, core probe `core_probe_all=true`
 (`piu10_frame_sync_history_probe=true`), `repiu_aot_probe --jamma-input-timeline` true, Linux x64 Release build and core probe (WSL) `core_probe_all=true`.
 
+## The user's play and the history race
+
+The user played eight songs on this PC (Win32, fullscreen, a real pad): 46 of 47 overwrites at +1.1 or −2.9 ms and
+one at +55.3 ms. In the trace one status read of that window answered 0→1→0 at the very moment of a toggle
+(352.613048 s): a read between the worker flipping the live bit and recording the flip found no newer flip in the
+history and returned the already flipped live bit (two phantom changes, undone when two toggles cancelled in the next
+window). With a history, the answer now comes from its newest flip instead of the live bit; the probe covers the case.
+The user's call: good enough; record what remains, merge and release. After the fix, the same automated play
+(play11, 300 s, no capture) gave 21 overwrites, all +1.1 or −2.9 ms; the Win32 and Linux x64 core probes pass.
+
 ## What remains
+
+The follow-ups moved to [#59](https://github.com/reexec/rePIU/issues/59).
+
 
 * B and C: the tick schedule apart from the present, and injection during every gate wait, starting from the cause of
   #6's 15% frame cost.

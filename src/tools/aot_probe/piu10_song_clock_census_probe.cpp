@@ -164,7 +164,10 @@ bool RunPiu10FrameSyncHistoryProbe()
     const bool lookup = empty && history.ValueAt(50U, 0U) == 1U &&
         history.ValueAt(100U, 0U) == 0U && history.ValueAt(150U, 0U) == 0U &&
         history.ValueAt(250U, 0U) == 1U && history.ValueAt(300U, 0U) == 0U &&
-        history.ValueAt(400U, 0U) == 0U;
+        history.ValueAt(400U, 0U) == 0U &&
+        // The live bit already flipped by the worker but not yet recorded
+        // does not leak into an answer.
+        history.ValueAt(400U, 1U) == 0U;
 
     // Four ticks due 10 ms apart, delivered at once at 40 ms against flips
     // 26 ms apart: answered at their due times, each flip is seen once.

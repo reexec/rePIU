@@ -32,8 +32,8 @@ public:
     // The audio worker, after flipping the bit to `value` at `time_ns`.
     void Record(std::uint64_t time_ns, std::uint8_t value);
 
-    // The bit as it was at `time_ns`. `live` is the bit now, returned when no
-    // recorded flip is later than `time_ns`.
+    // The bit as it was at `time_ns`. `live` is the bit now, used only before
+    // any flip has been recorded.
     std::uint8_t ValueAt(std::uint64_t time_ns, std::uint8_t live) const;
 
 private:

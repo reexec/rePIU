@@ -1381,7 +1381,9 @@ tick의 due 시각의 비트로 답한다(`Piu10FrameSyncAnswerClock`, 되돌아
 첫 판은 CAT702 통신이 같은 포트를 읽어(상태 읽기의 70%) 답변 시각을 앞당겼고, +51 ms 가짜 변화와 −190~−449 ms
 되돌아감이 남았다. 캡처를 켠 같은 조건에서 수정 뒤 스테이지 두 곡의 덮어쓰기 16회가 모두 +1.1 또는 −2.9 ms(tick
 하나 안)였다. 남은 큰 점프는 타이틀 곡의 +26.1 ms 한 번으로, 게스트가 290 ms 멈춰 backlog 상한(64 tick)을 넘긴
-tick 폐기다. 곡 사이(공급 함수가 쉬는 구간)의 다중 변화는 곡 위치와 무관하다.
+tick 폐기다. 곡 사이(공급 함수가 쉬는 구간)의 다중 변화는 곡 위치와 무관하다. 사용자 플레이(8곡)에서 한 번
++55.3 ms가 나온 것은 워커가 live 비트를 뒤집고 이력에 기록하는 사이의 race였고, 이력이 있으면 이력의 마지막 값으로
+답하도록 고쳤다. 후속은 #59.
 
 ### English
 
@@ -1417,4 +1419,6 @@ backwards). A first version answering reads outside handlers at the present was 
 which reads the same port (70% of the status reads), and left a +51 ms phantom change and steps back of −190 to −449
 ms. With the capture running, after the fix all 16 overwrites in two stages were +1.1 or −2.9 ms (within one tick).
 The one large jump left, +26.1 ms in the title song, is ticks dropped when the guest stalled 290 ms past the backlog's
-64-tick bound. Multiple changes between songs, where the feeder idles, do not touch the song position.
+64-tick bound. Multiple changes between songs, where the feeder idles, do not touch the song position. A +55.3 ms
+in the user's play (eight songs) was a race between the worker flipping the live bit and recording the flip; with a
+history the answer now comes from its newest flip. Follow-ups are #59.

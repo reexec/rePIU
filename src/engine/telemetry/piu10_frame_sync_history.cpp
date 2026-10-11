@@ -44,10 +44,14 @@ std::uint8_t Piu10FrameSyncHistory::ValueAt(std::uint64_t time_ns,
     {
         return live;
     }
+    // The newest recorded flip, not `live`: the worker flips the live bit
+    // before it records the flip, and a read between the two found no newer
+    // flip here and answered with the already flipped bit -- one phantom
+    // change each way, two frames on the game's count.
     const std::uint32_t newest = (next_ + kCapacity - 1U) % kCapacity;
     if (edges_[newest].time_ns <= time_ns)
     {
-        return live;
+        return edges_[newest].value;
     }
     // Newest first: the latest flip at or before `time_ns` set the bit.
     for (std::uint32_t back = 1U; back < size_; ++back)

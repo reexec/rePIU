@@ -76,6 +76,11 @@ C(모든 게이트 대기 중 주입)는 공존 가능하고 함께 해야 효�
 440 ms 멈춘 창 하나(그린 프레임 351/401, tick 50개 폐기)가 +47.0 ms였다. 정지 원인은 이 실행에 트레이스가 없어
 미확인이며, frame-sync가 아니라 정지와 backlog 상한의 문제다.
 
+정지 재현 시도: 트레이스를 켠 실행 4회(300초 1회, 160초 3회)에서 스테이지 정지는 다시 나오지 않았고 덮어쓰기는
+모두 ±5.4 ms 이내였다. play9의 정지 구간에서는 호스트 폴 스레드의 1초 live 줄 간격도 1,123 ms로 벌어졌고 몇 초간
+fps가 38–62로 출렁였다. 게스트만이 아니라 호스트 스레드까지 막힌 정지로 보이며(추정), 그 동안 due tick이 한 번에
+64개 상한을 넘어 버려졌다.
+
 검증: Win32 Release `repiu`·`repiu_core_probe`·`repiu_aot_probe` 빌드, core probe `core_probe_all=true`
 (`piu10_frame_sync_history_probe=true`), `repiu_aot_probe --jamma-input-timeline` true, Linux x64 Release 빌드와 core probe(WSL) `core_probe_all=true`.
 
@@ -166,6 +171,11 @@ schedule) and C (injection during every gate wait) can coexist and work best tog
 Normal conditions without the capture (play9, 300 s, 58.5 fps on average): 20 of 21 overwrites within −2.9 to +5.3
 ms. One window, where the guest stood still for 440 ms mid-stage (351 of 401 frames drawn, 50 ticks dropped), gave
 +47.0 ms. The stall's cause is not known (this run had no trace); it is a stall and the backlog bound, not frame-sync.
+
+Attempts to reproduce the stall: four traced runs (one of 300 s, three of 160 s) showed no stage stall and every
+overwrite within ±5.4 ms. In play9's stalled window the host poll thread's one-second live line also came 1,123 ms
+apart and fps swung between 38 and 62 for a few seconds: a stall that held the host threads as well as the guest
+(inferred), during which the due ticks passed the 64-tick bound at once and were dropped.
 
 Verification: Win32 Release `repiu`, `repiu_core_probe` and `repiu_aot_probe` builds, core probe `core_probe_all=true`
 (`piu10_frame_sync_history_probe=true`), `repiu_aot_probe --jamma-input-timeline` true, Linux x64 Release build and core probe (WSL) `core_probe_all=true`.

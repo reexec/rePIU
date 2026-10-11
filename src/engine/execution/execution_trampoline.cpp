@@ -16,6 +16,7 @@
 #include "execution_trampoline_model.h"
 #include "repiu/runtime/execution_model.h"
 #include "repiu/runtime/env_toggle.h"
+#include "repiu/engine/timer_latency_trace.h"
 #include "repiu/runtime/execution_timeout.h"
 #include "repiu/runtime/timer_safe_point_injection.h"
 #include "repiu/runtime/aot_long_mode_compatibility.h"
@@ -4026,6 +4027,17 @@ bool TimerHandlerCacheEntryEnabled()
     return enabled;
 }
 
+// Task 366 counts the deferral; issue #58 also records which check made it.
+void DeferTimerTick(ThreadContext* context, TimerDeferReason reason)
+{
+    RecordTimerTickDeferred(&context->timer_tick_delivery);
+    if (TimerLatencyTraceEnabled())
+    {
+        RecordTimerTrace(TimerTraceEvent::kDefer, TimerTraceNowNanoseconds(),
+                         static_cast<std::uint32_t>(reason));
+    }
+}
+
 }  // namespace
 
 std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_context,
@@ -4068,13 +4080,13 @@ std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_co
     if (!IsGuestInstructionPointer(context, static_cast<std::uint32_t>(win32_context->Eip)) &&
         !IsAotCacheAddress(context, static_cast<std::uint32_t>(win32_context->Eip)))
     {
-        RecordTimerTickDeferred(&context->timer_tick_delivery);
+        DeferTimerTick(context, TimerDeferReason::kNotGuestCode);
         return 0U;
     }
 
     if ((win32_context->EFlags & kEFlagsInterruptEnable) == 0U)
     {
-        RecordTimerTickDeferred(&context->timer_tick_delivery);
+        DeferTimerTick(context, TimerDeferReason::kInterruptFlag);
         return 0U;
     }
 
@@ -4084,7 +4096,7 @@ std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_co
         GuestCliBlocksInjection(&context->pic_timer_in_service,
                                 GuestCliHoldClockNanoseconds()))
     {
-        RecordTimerTickDeferred(&context->timer_tick_delivery);
+        DeferTimerTick(context, TimerDeferReason::kGuestCli);
         return 0U;
     }
 
@@ -4099,7 +4111,7 @@ std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_co
                                 static_cast<std::uint32_t>(win32_context->Esp),
                                 at_sti))
     {
-        RecordTimerTickDeferred(&context->timer_tick_delivery);
+        DeferTimerTick(context, TimerDeferReason::kInService);
         return 0U;
     }
 
@@ -4114,7 +4126,7 @@ std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_co
                                        GuestCliHoldClockNanoseconds(),
                                        tick_period_ns))
     {
-        RecordTimerTickDeferred(&context->timer_tick_delivery);
+        DeferTimerTick(context, TimerDeferReason::kPostReturnChain);
         return 0U;
     }
 
@@ -4161,7 +4173,7 @@ std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_co
             if (!FindAotGuestAddress(*context->aot_placement, eip,
                                      &guest_address))
             {
-                RecordTimerTickDeferred(&context->timer_tick_delivery);
+                DeferTimerTick(context, TimerDeferReason::kCacheAddress);
                 return 0U;
             }
             eip = guest_address;
@@ -4170,14 +4182,14 @@ std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_co
         if (!runtime::FindSelectorForLinearAddress(
                 context->selector_table, eip, &logical_cs))
         {
-            RecordTimerTickDeferred(&context->timer_tick_delivery);
+            DeferTimerTick(context, TimerDeferReason::kSelector);
             return 0U;
         }
         const runtime::GuestDescriptor* const code_descriptor =
             runtime::FindDescriptor(context->selector_table, logical_cs);
         if (code_descriptor == nullptr || !code_descriptor->executable)
         {
-            RecordTimerTickDeferred(&context->timer_tick_delivery);
+            DeferTimerTick(context, TimerDeferReason::kSelector);
             return 0U;
         }
         segcs = logical_cs;
@@ -4212,8 +4224,14 @@ std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_co
                          at_sti);
     NoteTimerInjectionTime(&context->pic_timer_in_service,
                            GuestCliHoldClockNanoseconds());
+    std::uint64_t tick_due_ns = 0U;
     context->jamma_input_timeline.BeginTimerInterrupt(
-        win32_context->Esp, interrupt_frame_esp, eip);
+        win32_context->Esp, interrupt_frame_esp, eip, &tick_due_ns);
+    if (TimerLatencyTraceEnabled())
+    {
+        RecordTimerTrace(TimerTraceEvent::kInject, TimerTraceNowNanoseconds(),
+                         eip, at_sti ? 1U : 0U, tick_due_ns);
+    }
     context->timer_interrupt_pending.store(keep_armed,
                                            std::memory_order_relaxed);
     timer_guard.Release();

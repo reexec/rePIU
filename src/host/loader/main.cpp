@@ -11,6 +11,7 @@
 #include <SDL3/SDL_error.h>
 #include "repiu/engine/eeprom_backing_path.h"
 #include "repiu/engine/execution_trampoline.h"
+#include "repiu/engine/timer_latency_trace.h"
 #include "repiu/engine/final_execution_report.h"
 #include "repiu/engine/session_display_preferences.h"
 #include "repiu/platform/build_identity.h"
@@ -3200,6 +3201,8 @@ void PrintExecutionAttempt(
             mp3.starvation_events, mp3.sync_toggles,
             mp3.sync_multi_toggle_events, mp3.pcm_empty_events,
             mp3.pcm_queued_low_water_bytes, mp3.device_buffer_frames);
+        // Issue #58: the guest thread has stopped, so the trace is complete.
+        repiu::engine::WriteTimerLatencyTrace();
         // Issue #58: how far the arrows moved at the song clock overwrites.
         const auto& song_clock = attempt.piu10_song_clock;
         logger.info(

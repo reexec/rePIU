@@ -1,4 +1,5 @@
 #include "repiu/engine/piu10_mp3_audio_out.h"
+#include "repiu/engine/timer_latency_trace.h"
 
 #include "repiu/sound/decoder_input_fifo.h"
 #include "repiu/sound/mpeg_audio_frame.h"
@@ -142,6 +143,7 @@ struct Piu10Mp3AudioOut::Impl
     std::atomic<std::int64_t> last_toggle_us{0};
     std::atomic<std::uint64_t> toggle_seq{0};
     mutable std::uint8_t last_seen_sync = 0xFFU;
+    mutable std::uint8_t trace_last_seen_sync = 0xFFU;
     mutable std::uint64_t reads_since_seen = 0U;
     std::string message;
 
@@ -259,6 +261,14 @@ struct Piu10Mp3AudioOut::Impl
             frame_sync.fetch_xor(1U, std::memory_order_relaxed);
             frame_start_pcm_offsets.pop_front();
             ++toggles;
+            if (TimerLatencyTraceEnabled())
+            {
+                RecordTimerTrace(
+                    TimerTraceEvent::kToggle, TimerTraceNowNanoseconds(),
+                    static_cast<std::uint32_t>(
+                        sync_toggles.load(std::memory_order_relaxed) +
+                        toggles));
+            }
             if (position_trace)
             {
                 const std::int64_t now_us = TraceMicroseconds();
@@ -831,6 +841,12 @@ std::uint8_t Piu10Mp3AudioOut::frame_sync() const
 {
     const std::uint8_t value =
         impl_->frame_sync.load(std::memory_order_relaxed);
+    if (TimerLatencyTraceEnabled() && value != impl_->trace_last_seen_sync)
+    {
+        impl_->trace_last_seen_sync = value;
+        RecordTimerTrace(TimerTraceEvent::kSeen, TimerTraceNowNanoseconds(),
+                         value);
+    }
     if (impl_->position_trace)
     {
         ++impl_->reads_since_seen;

@@ -39,6 +39,21 @@ vsync 대기 중 tick 정지에 따른 관측 양자화)였고, 토글 손실은
 
 로그는 세션 임시 디렉터리에 있다(`px3_play3.err.log`, `px3_play4.err.log`).
 
+## 2차 분석: 타이머 tick 전달의 한계
+
+사용자 요청으로 tick이 어디서 늦는지 계측했다(`REPIU_TIMER_LATENCY_TRACE`, `docs/analysis/interrupts-and-port-io.md`의
+issue #58 절).
+
+* Win32(실제 vsync): tick 지연의 거의 전부가 arm 지연(p50 6.05 ms, p90 13.2 ms)이다. PIT 스케줄이 vsync present를
+  실행하는 호스트 폴 스레드에 있어 present가 막힌 동안 tick이 등록되지 않고, 게스트 스레드도 그 present를
+  grBufferSwap·grTexDownloadTable·grTexSource 게이트에서 프레임당 약 14 ms 기다린다. tick은 프레임당 한 번 4개씩
+  몰려 들어가(4개 묶음 9,915번) ISR이 사실상 60 Hz로 장치를 읽는다.
+* Linux x64(WSL, 페이서): arm 지연 p50 0.23 ms, tick 96%가 1 ms 안. WSL에서는 MP3 재생이 진행되지 않아 토글은
+  비교하지 못했다.
+* 토글 손실(캡처 없음, Win32): 곡 시작·곡 전환에서 게스트가 88–140 ms 동안 tick을 못 받은 구간(주입 거부는
+  cli·IF·in-service가 몇 번뿐 — 안전점에 거의 닿지 않음)과, 스테이지 시작의 73 ms grBufferSwap.
+* INT 21h 기록은 0건이었다. 0.5 ms를 넘는 서비스가 없었거나 파일 읽기가 이 핸들러를 거치지 않는 경로로 간다(미확인).
+
 ## 남은 것
 
 * 수정은 하지 않았다. 후보: frame-sync 전이를 주입된 tick 하나당 최대 한 번으로 줄 세워, tick이 늦어도 게임이
@@ -92,6 +107,20 @@ lets the user's setups give the same numbers.
 | pumpipx3 automated play, 300 s × 2 (capture on/off) | the table above and section 22 of `docs/analysis/piu-io-port-specification.md` |
 
 The logs are in the session's temporary directory (`px3_play3.err.log`, `px3_play4.err.log`).
+
+## Second analysis: the limits of timer tick delivery
+
+At the user's request, where ticks are held was measured (`REPIU_TIMER_LATENCY_TRACE`, the issue #58 section of
+`docs/analysis/interrupts-and-port-io.md`). On Win32 with real vsync almost all tick latency is arming lateness
+(p50 6.05 ms, p90 13.2 ms): the PIT schedule lives on the host poll thread that runs the vsync present, so no tick is
+registered while the present blocks, and the guest thread waits for that present in the grBufferSwap,
+grTexDownloadTable and grTexSource gates for about 14 ms a frame. Ticks arrive four at once, once a frame (9,915
+four-tick bursts), so the ISR reads its devices effectively at 60 Hz. On Linux x64 (WSL, pacer) arming lateness is
+p50 0.23 ms and 96% of ticks land within 1 ms; MP3 playback did not advance on WSL, so toggles were not compared.
+Toggle losses without the capture (Win32): song starts and changes where the guest got no tick for 88–140 ms (a few
+cli, IF and in-service refusals only, so safe points were hardly reached), and a 73 ms grBufferSwap at a stage start.
+The INT 21h record stayed empty: either no service passed 0.5 ms or file reads take a path around this handler
+(unconfirmed).
 
 ## What remains
 

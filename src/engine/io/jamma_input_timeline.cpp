@@ -148,15 +148,21 @@ void JammaInputTimeline::ClearTimerTicks() {
 
 bool JammaInputTimeline::BeginTimerInterrupt(
     std::uint32_t pre_interrupt_esp, std::uint32_t interrupt_frame_esp,
-    std::uint32_t interrupted_eip) {
+    std::uint32_t interrupted_eip, std::uint64_t* due_timestamp) {
   TimelineLock lock(&lock_);
   RetireReplayFramesLocked(pre_interrupt_esp);
   RetireStaleReplayFramesLocked();
+  if (due_timestamp != nullptr) {
+    *due_timestamp = 0U;
+  }
   if (due_size_ == 0U) {
     ++replay_missing_due_count_;
     return false;
   }
   const std::uint64_t replay_timestamp = due_timestamps_[due_head_];
+  if (due_timestamp != nullptr) {
+    *due_timestamp = replay_timestamp;
+  }
   due_head_ = (due_head_ + 1U) % kDueCapacity;
   --due_size_;
   if (replay_frame_depth_ == kDueCapacity) {

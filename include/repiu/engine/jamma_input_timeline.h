@@ -60,9 +60,12 @@ public:
 
     bool EnqueueTimerTick(std::uint64_t due_timestamp_nanoseconds);
     void ClearTimerTicks();
+    // Issue #58: `due_timestamp`, when given, receives the due time of the
+    // tick this interrupt carries (0 when none was queued).
     bool BeginTimerInterrupt(std::uint32_t pre_interrupt_esp,
                              std::uint32_t interrupt_frame_esp,
-                             std::uint32_t interrupted_eip = 0U);
+                             std::uint32_t interrupted_eip = 0U,
+                             std::uint64_t* due_timestamp = nullptr);
     // Task 753. The handler's return, seen where the engine executes the
     // `iret` itself: `interrupt_frame_esp` is ESP at that `iret`. Only a
     // return popping a frame an interrupt pushed ends anything, so the `iret`

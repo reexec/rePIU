@@ -390,6 +390,7 @@ target_sources(repiu_exe
         src/engine/telemetry/glide_setter_phase_timing.cpp
         src/engine/telemetry/timer_tick_delivery.cpp
         src/engine/telemetry/piu10_song_clock_census.cpp
+        src/engine/telemetry/timer_latency_trace.cpp
         src/engine/telemetry/guest_address_watch.cpp
         src/engine/telemetry/guest_write_trace.cpp
         src/engine/telemetry/fault_exit_trace.cpp

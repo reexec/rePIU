@@ -2,6 +2,7 @@
 #include "aot/aot_runtime_dispatch.h"
 #include "execution_internal.h"
 #include "guest_memory_access.h"
+#include "repiu/engine/timer_latency_trace.h"
 #include "dpmi_mscdex_services.h"
 #include "repiu/hle/dos_date.h"
 
@@ -1699,6 +1700,27 @@ bool HandleDosInterrupt21(repiu::platform::GuestCpuContext* win32_context, Threa
         win32_context->Eax & 0xFFFFU);
     const std::uint8_t ah = static_cast<std::uint8_t>(
         (win32_context->Eax >> 8) & 0xFF);
+    // Issue #58: a service that holds the guest thread, where no timer safe
+    // point exists, goes to the timer latency trace.
+    struct TimerTraceDosScope
+    {
+        std::uint64_t begin_ns;
+        std::uint32_t ah;
+        ~TimerTraceDosScope()
+        {
+            if (begin_ns == 0U)
+            {
+                return;
+            }
+            const std::uint64_t held = TimerTraceNowNanoseconds() - begin_ns;
+            if (held >= 500000ULL)
+            {
+                RecordTimerTrace(TimerTraceEvent::kDos, begin_ns, ah,
+                                 static_cast<std::uint32_t>(held / 1000U));
+            }
+        }
+    } timer_trace_dos_scope{
+        TimerLatencyTraceEnabled() ? TimerTraceNowNanoseconds() : 0U, ah};
 
     switch (ah)
     {

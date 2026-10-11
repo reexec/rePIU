@@ -23,6 +23,8 @@ namespace repiu::engine
 //   dos     INT 21h services that held it 0.5 ms or more
 //   toggle  MP3 frame-sync changes, and the guest reads that saw them
 //   swap    buffer swaps
+//   read    every PIU10 MP3 status read: the bit answered, whether inside a
+//           timer handler, and the time it was answered for
 // and writes them as text to the path at teardown. Off, each site costs one
 // load of a static flag.
 
@@ -36,6 +38,7 @@ enum class TimerTraceEvent : std::uint8_t
     kToggle = 6,
     kSeen = 7,
     kSwap = 8,
+    kStatusRead = 9,
 };
 
 // Why an injection attempt was turned away, in the order the checks run.

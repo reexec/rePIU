@@ -615,6 +615,7 @@ bool HandlePortIoInstruction(repiu::platform::GuestCpuContext *win32_context, Th
 
     bool handled = false;
     if (is_input) {
+      context->piu10_read_guest_esp = static_cast<std::uint32_t>(win32_context->Esp);
       if (width == 1U) {
         std::uint8_t read_value = 0;
         handled = context->piu10_isa_board.Read8(port, &read_value);

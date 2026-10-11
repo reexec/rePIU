@@ -59,6 +59,7 @@ void JammaInputTimeline::Reset(std::uint64_t timestamp_nanoseconds,
   due_size_ = 0;
   last_due_timestamp_ = 0;
   has_due_timestamp_ = false;
+  last_begun_timestamp_ = 0;
   replay_frame_depth_ = 0;
   edge_count_ = 0;
   history_pruned_count_ = 0;
@@ -163,6 +164,7 @@ bool JammaInputTimeline::BeginTimerInterrupt(
   if (due_timestamp != nullptr) {
     *due_timestamp = replay_timestamp;
   }
+  last_begun_timestamp_ = replay_timestamp;
   due_head_ = (due_head_ + 1U) % kDueCapacity;
   --due_size_;
   if (replay_frame_depth_ == kDueCapacity) {
@@ -315,6 +317,23 @@ bool JammaInputTimeline::TryReplayPressedMask(
   *pressed_mask = StateAtLocked(
       replay_frames_[replay_frame_depth_ - 1U].timestamp_nanoseconds);
   ++replay_read_count_;
+  return true;
+}
+
+bool JammaInputTimeline::TryReplayTimestamp(
+    std::uint32_t current_esp, std::uint64_t *timestamp_nanoseconds) {
+  if (timestamp_nanoseconds == nullptr) {
+    return false;
+  }
+  TimelineLock lock(&lock_);
+  RetireReplayFramesLocked(current_esp);
+  RetireStaleReplayFramesLocked();
+  if (replay_frame_depth_ == 0U) {
+    *timestamp_nanoseconds = last_begun_timestamp_;
+    return false;
+  }
+  *timestamp_nanoseconds =
+      replay_frames_[replay_frame_depth_ - 1U].timestamp_nanoseconds;
   return true;
 }
 

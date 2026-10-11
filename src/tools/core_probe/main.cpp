@@ -121,6 +121,9 @@ constexpr CoreProbe kCoreProbes[] = {
     // Issue #58. The song clock overwrite replayed over synthetic reads.
     {"piu10_song_clock_census",
      &repiu::tools::RunPiu10SongClockCensusProbe},
+    // Issue #58. The frame-sync bit answered at a tick's due time.
+    {"piu10_frame_sync_history",
+     &repiu::tools::RunPiu10FrameSyncHistoryProbe},
     {"segment_push", &repiu::tools::RunSegmentPushProbe},
     {"glide_lfb_region", &repiu::tools::RunGlideLfbRegionProbe},
     // Issue #45: the picture rectangle, stretch included.

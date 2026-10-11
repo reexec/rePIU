@@ -54,10 +54,35 @@ issue #58 절).
   cli·IF·in-service가 몇 번뿐 — 안전점에 거의 닿지 않음)과, 스테이지 시작의 73 ms grBufferSwap.
 * INT 21h 기록은 0건이었다. 0.5 ms를 넘는 서비스가 없었거나 파일 읽기가 이 핸들러를 거치지 않는 경로로 간다(미확인).
 
+## 수정 A: frame-sync를 tick의 due 시각으로 답한다
+
+사용자 결정으로 A(MP3 상태 비트를 키 입력처럼 tick 시각 기준으로 답함)를 먼저 했다. B(tick 스케줄 전용 스레드)와
+C(모든 게이트 대기 중 주입)는 공존 가능하고 함께 해야 효과가 나므로 별도 과제로 둔다.
+
+* `Piu10FrameSyncHistory`: 워커가 뒤집은 시각과 값을 256칸 링에 기록, 게스트가 과거 시각의 값을 조회.
+* `Piu10FrameSyncAnswerClock`: 답할 시각 = 게스트 시각(핸들러 안은 그 tick의 due, 밖은 마지막 전달 tick의 due),
+  지금을 넘지 않고 뒤로 가지 않음.
+* `JammaInputTimeline::TryReplayTimestamp`: 키 입력과 같은 frame 규칙으로 due 시각, 밖이면 마지막 전달 시각.
+* 포트 I/O가 PIU10 읽기 직전 ESP를 `ThreadContext::piu10_read_guest_esp`에 둔다.
+* 스위치 `REPIU_PIU10_FRAME_SYNC_REPLAY`(기본 켜짐). 트레이스에 `read` 이벤트 추가.
+
+| 실행(Win32, 캡처 5초 간격, 300초) | 스테이지 덮어쓰기 점프 | 비고 |
+|---|---|---|
+| 수정 전(play3) | −194.6 ~ +5.4 ms, 8 ms 이상 8회 | |
+| 첫 판: 핸들러 밖을 "지금"으로(play6, play7) | 대부분 ±3 ms, 그러나 −448.7, −190.4, +51.1 | 상태 읽기의 70%가 핸들러 밖(CAT702) |
+| 최종(play8) | 16회 모두 +1.1 / −2.9 ms | 타이틀 곡 +26.1 ms 1회 = 290 ms 정지의 tick 폐기 |
+
+캡처 없는 평상 조건(play9, 300초, 평균 58.5 fps): 덮어쓰기 21회 중 20회가 −2.9 ~ +5.3 ms. 스테이지 중간에 게스트가
+440 ms 멈춘 창 하나(그린 프레임 351/401, tick 50개 폐기)가 +47.0 ms였다. 정지 원인은 이 실행에 트레이스가 없어
+미확인이며, frame-sync가 아니라 정지와 backlog 상한의 문제다.
+
+검증: Win32 Release `repiu`·`repiu_core_probe`·`repiu_aot_probe` 빌드, core probe `core_probe_all=true`
+(`piu10_frame_sync_history_probe=true`), `repiu_aot_probe --jamma-input-timeline` true, Linux x64 Release 빌드와 core probe(WSL) `core_probe_all=true`.
+
 ## 남은 것
 
-* 수정은 하지 않았다. 후보: frame-sync 전이를 주입된 tick 하나당 최대 한 번으로 줄 세워, tick이 늦어도 게임이
-  프레임을 잃지 않게 한다(두 OS 공통). Win32의 스왑 대기 중 tick 주입(#6에서 유보)은 ±15 ms 양자화를 줄인다.
+* B와 C: tick 스케줄을 present와 분리하고, 모든 게이트 대기 중에 tick을 주입한다. #6의 프레임 15% 비용 원인부터.
+* 스테이지 중 게스트 정지(440 ms, fps 38)의 원인과, 267 ms 넘는 정지의 tick 폐기(backlog 64).
 * 사용자 환경(Linux 실기, 스팀덱, 고주사율 화면, 녹화 도구)의 수치. WSL은 사운드 서버 속도 문제(Task 755)로
   MP3와 tick이 어긋나 이 측정에 쓰지 않았다.
 
@@ -122,9 +147,33 @@ cli, IF and in-service refusals only, so safe points were hardly reached), and a
 The INT 21h record stayed empty: either no service passed 0.5 ms or file reads take a path around this handler
 (unconfirmed).
 
+## Fix A: frame-sync answered at the tick's due time
+
+The user chose A first (answer the MP3 status bit at tick time, as the keys are). B (a thread of its own for the tick
+schedule) and C (injection during every gate wait) can coexist and work best together; they are a task of their own.
+
+* `Piu10FrameSyncHistory`: the worker records each flip's time and value in a 256-entry ring; the guest looks up the
+  value at a past time. `Piu10FrameSyncAnswerClock`: the time answered is the guest's (the tick's due time inside a
+  handler, the latest delivered tick's outside), never past the present and never backwards.
+  `JammaInputTimeline::TryReplayTimestamp` gives that time by the keys' frame rules. The port I/O path leaves the
+  ESP of a PIU10 read in `ThreadContext::piu10_read_guest_esp`. Switch `REPIU_PIU10_FRAME_SYNC_REPLAY` (on); a
+  `read` event in the trace.
+* Win32, capture every 5 s, 300 s: before the fix (play3) stage overwrites −194.6 to +5.4 ms, eight over 8 ms; a first
+  version answering reads outside handlers at the present (play6, play7) mostly ±3 ms but −448.7, −190.4 and +51.1,
+  with 70% of status reads outside handlers (CAT702); the final one (play8) all 16 at +1.1 or −2.9 ms, plus one
+  +26.1 ms in the title song from ticks dropped in a 290 ms stall.
+
+Normal conditions without the capture (play9, 300 s, 58.5 fps on average): 20 of 21 overwrites within −2.9 to +5.3
+ms. One window, where the guest stood still for 440 ms mid-stage (351 of 401 frames drawn, 50 ticks dropped), gave
++47.0 ms. The stall's cause is not known (this run had no trace); it is a stall and the backlog bound, not frame-sync.
+
+Verification: Win32 Release `repiu`, `repiu_core_probe` and `repiu_aot_probe` builds, core probe `core_probe_all=true`
+(`piu10_frame_sync_history_probe=true`), `repiu_aot_probe --jamma-input-timeline` true, Linux x64 Release build and core probe (WSL) `core_probe_all=true`.
+
 ## What remains
 
-* No fix yet. Candidate: release frame-sync transitions at most one per injected tick, so late ticks never cost the
-  game a frame (both OSes). Win32 tick injection during the swap wait (held back in #6) would shrink the ±15 ms.
+* B and C: the tick schedule apart from the present, and injection during every gate wait, starting from the cause of
+  #6's 15% frame cost.
+* The cause of a mid-stage guest stall (440 ms, 38 fps), and ticks dropped in stalls over 267 ms (the 64-tick backlog).
 * Numbers from the user's setups (Linux hardware, the Steam Deck, high-refresh screens, recording tools). WSL was
   not used for this measurement: its sound server's rate (Task 755) puts the MP3 and the ticks apart.

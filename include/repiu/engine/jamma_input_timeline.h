@@ -74,6 +74,13 @@ public:
     bool EndTimerInterrupt(std::uint32_t interrupt_frame_esp);
     bool TryReplayPressedMask(std::uint32_t current_esp,
                               std::uint16_t* pressed_mask);
+    // Issue #58. The due time of the tick whose handler is running at
+    // `current_esp`, by the same frame rules as the read above, for other
+    // devices the handler samples. Outside every handler it returns false
+    // and gives the due time of the latest tick delivered (0 before any):
+    // the guest has seen time up to there and no further.
+    bool TryReplayTimestamp(std::uint32_t current_esp,
+                            std::uint64_t* timestamp_nanoseconds);
     // Task 753. A scripted keyboard pushes events, which SDL's keyboard state
     // array does not follow, so with one running a read outside every handler
     // is answered from the latest recorded state instead.
@@ -116,6 +123,7 @@ private:
     std::uint32_t due_head_ = 0;
     std::uint32_t due_size_ = 0;
     std::uint64_t last_due_timestamp_ = 0;
+    std::uint64_t last_begun_timestamp_ = 0;
     bool has_due_timestamp_ = false;
 
     ReplayFrame replay_frames_[kDueCapacity] = {};

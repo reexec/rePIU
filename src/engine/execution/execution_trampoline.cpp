@@ -17,6 +17,7 @@
 #include "repiu/runtime/execution_model.h"
 #include "repiu/runtime/env_toggle.h"
 #include "repiu/engine/timer_latency_trace.h"
+#include "repiu/engine/event_clock.h"
 #include "repiu/runtime/execution_timeout.h"
 #include "repiu/runtime/timer_safe_point_injection.h"
 #include "repiu/runtime/aot_long_mode_compatibility.h"
@@ -6722,14 +6723,46 @@ bool RunExecutionThread(
             // of `kPiu10SongClockReportJumpMs` or more are printed anyway.
             static const bool song_clock_log = repiu::runtime::
                 ResolveOptInToggle(std::getenv("REPIU_PIU10_SONG_CLOCK_LOG"));
+            // Issue #58. A read inside an injected timer handler gets the
+            // frame-sync bit as it was at that tick's due time, as the JAMMA
+            // inputs do (see piu10_frame_sync_history.h). The flips are
+            // stamped on the steady clock, so the replay needs the tick
+            // schedule on it too. `REPIU_PIU10_FRAME_SYNC_REPLAY=0` answers
+            // every read with the bit as it is now, as before.
+            static const bool frame_sync_replay =
+                repiu::runtime::ResolvePromotedToggle(
+                    std::getenv("REPIU_PIU10_FRAME_SYNC_REPLAY")) &&
+                ResolveEventClockUsesSteady(std::getenv("REPIU_EVENT_CLOCK"));
             context.piu10_isa_board.SetMp3StatusSource([&context]() {
-                const std::uint8_t frame_sync =
-                    context.piu10_mp3_audio.frame_sync();
-                Piu10SongClockRead read;
-                read.now_ns = static_cast<std::uint64_t>(
+                const std::uint64_t now_ns = static_cast<std::uint64_t>(
                     std::chrono::duration_cast<std::chrono::nanoseconds>(
                         std::chrono::steady_clock::now().time_since_epoch())
                         .count());
+                std::uint8_t frame_sync = 0U;
+                std::uint64_t answer_ns = now_ns;
+                bool in_handler = false;
+                if (frame_sync_replay)
+                {
+                    std::uint64_t guest_ns = 0U;
+                    in_handler =
+                        context.jamma_input_timeline.TryReplayTimestamp(
+                            context.piu10_read_guest_esp, &guest_ns);
+                    answer_ns = context.piu10_frame_sync_answer_clock.Answer(
+                        guest_ns, now_ns);
+                    frame_sync = context.piu10_mp3_audio.FrameSyncAt(answer_ns);
+                }
+                else
+                {
+                    frame_sync = context.piu10_mp3_audio.frame_sync();
+                }
+                if (TimerLatencyTraceEnabled())
+                {
+                    RecordTimerTrace(TimerTraceEvent::kStatusRead, now_ns,
+                                     frame_sync, in_handler ? 1U : 0U,
+                                     answer_ns);
+                }
+                Piu10SongClockRead read;
+                read.now_ns = now_ns;
                 read.frame_sync = frame_sync;
                 read.ticks_injected =
                     context.timer_tick_delivery.injected_total.load(

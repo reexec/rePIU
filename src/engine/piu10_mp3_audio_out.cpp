@@ -1,5 +1,6 @@
 #include "repiu/engine/piu10_mp3_audio_out.h"
 #include "repiu/engine/timer_latency_trace.h"
+#include "repiu/engine/piu10_frame_sync_history.h"
 
 #include "repiu/sound/decoder_input_fifo.h"
 #include "repiu/sound/mpeg_audio_frame.h"
@@ -144,6 +145,9 @@ struct Piu10Mp3AudioOut::Impl
     std::atomic<std::uint64_t> toggle_seq{0};
     mutable std::uint8_t last_seen_sync = 0xFFU;
     mutable std::uint8_t trace_last_seen_sync = 0xFFU;
+    // Issue #58: when the bit flipped, for reads answered at a tick's due
+    // time. Written by the worker, read by the guest thread.
+    Piu10FrameSyncHistory frame_sync_history;
     mutable std::uint64_t reads_since_seen = 0U;
     std::string message;
 
@@ -258,13 +262,16 @@ struct Piu10Mp3AudioOut::Impl
                frame_start_pcm_offsets.front() <= position)
         {
             const std::uint64_t frame_start = frame_start_pcm_offsets.front();
-            frame_sync.fetch_xor(1U, std::memory_order_relaxed);
+            const std::uint8_t flipped = static_cast<std::uint8_t>(
+                frame_sync.fetch_xor(1U, std::memory_order_relaxed) ^ 1U);
+            const std::uint64_t flip_ns = TimerTraceNowNanoseconds();
+            frame_sync_history.Record(flip_ns, flipped);
             frame_start_pcm_offsets.pop_front();
             ++toggles;
             if (TimerLatencyTraceEnabled())
             {
                 RecordTimerTrace(
-                    TimerTraceEvent::kToggle, TimerTraceNowNanoseconds(),
+                    TimerTraceEvent::kToggle, flip_ns,
                     static_cast<std::uint32_t>(
                         sync_toggles.load(std::memory_order_relaxed) +
                         toggles));
@@ -839,13 +846,27 @@ bool Piu10Mp3AudioOut::demand() const
 
 std::uint8_t Piu10Mp3AudioOut::frame_sync() const
 {
-    const std::uint8_t value =
-        impl_->frame_sync.load(std::memory_order_relaxed);
+    return NoteGuestFrameSyncRead(
+        impl_->frame_sync.load(std::memory_order_relaxed),
+        TimerTraceNowNanoseconds());
+}
+
+std::uint8_t Piu10Mp3AudioOut::FrameSyncAt(std::uint64_t time_ns) const
+{
+    return NoteGuestFrameSyncRead(
+        impl_->frame_sync_history.ValueAt(
+            time_ns, impl_->frame_sync.load(std::memory_order_relaxed)),
+        time_ns);
+}
+
+std::uint8_t Piu10Mp3AudioOut::NoteGuestFrameSyncRead(
+    std::uint8_t value, std::uint64_t answer_ns) const
+{
     if (TimerLatencyTraceEnabled() && value != impl_->trace_last_seen_sync)
     {
         impl_->trace_last_seen_sync = value;
         RecordTimerTrace(TimerTraceEvent::kSeen, TimerTraceNowNanoseconds(),
-                         value);
+                         value, 0U, answer_ns);
     }
     if (impl_->position_trace)
     {

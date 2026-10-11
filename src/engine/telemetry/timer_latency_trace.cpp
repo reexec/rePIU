@@ -62,6 +62,7 @@ const char* EventName(std::uint8_t event)
         case TimerTraceEvent::kToggle: return "toggle";
         case TimerTraceEvent::kSeen: return "seen";
         case TimerTraceEvent::kSwap: return "swap";
+        case TimerTraceEvent::kStatusRead: return "read";
     }
     return "unknown";
 }

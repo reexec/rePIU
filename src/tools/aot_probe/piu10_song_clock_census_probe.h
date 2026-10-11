@@ -5,6 +5,7 @@ namespace repiu::tools
 {
 
 bool RunPiu10SongClockCensusProbe();
+bool RunPiu10FrameSyncHistoryProbe();
 
 }  // namespace repiu::tools
 

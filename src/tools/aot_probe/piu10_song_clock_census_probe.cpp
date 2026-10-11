@@ -1,5 +1,6 @@
 #include "piu10_song_clock_census_probe.h"
 
+#include "repiu/engine/piu10_frame_sync_history.h"
 #include "repiu/engine/piu10_song_clock_census.h"
 
 #include <cmath>
@@ -146,6 +147,53 @@ bool RunPiu10SongClockCensusProbe()
               << (valid ? "true" : "false") << " clean=" << clean_ok
               << " stall=" << stall_ok << " drop=" << drop_ok
               << " songs=" << songs_ok << '\n';
+    return valid;
+}
+
+bool RunPiu10FrameSyncHistoryProbe()
+{
+    using engine::Piu10FrameSyncAnswerClock;
+    using engine::Piu10FrameSyncHistory;
+
+    // Flips at 100, 200 and 300 to 0, 1, 0; the bit was 1 before them.
+    Piu10FrameSyncHistory history;
+    const bool empty = history.ValueAt(50U, 1U) == 1U;
+    history.Record(100U, 0U);
+    history.Record(200U, 1U);
+    history.Record(300U, 0U);
+    const bool lookup = empty && history.ValueAt(50U, 0U) == 1U &&
+        history.ValueAt(100U, 0U) == 0U && history.ValueAt(150U, 0U) == 0U &&
+        history.ValueAt(250U, 0U) == 1U && history.ValueAt(300U, 0U) == 0U &&
+        history.ValueAt(400U, 0U) == 0U;
+
+    // Four ticks due 10 ms apart, delivered at once at 40 ms against flips
+    // 26 ms apart: answered at their due times, each flip is seen once.
+    Piu10FrameSyncHistory burst;
+    burst.Record(5000000U, 1U);
+    burst.Record(31000000U, 0U);
+    Piu10FrameSyncAnswerClock burst_clock;
+    std::uint8_t seen[4] = {};
+    for (std::uint32_t tick = 0; tick < 4U; ++tick)
+    {
+        seen[tick] = burst.ValueAt(
+            burst_clock.Answer(10000000ULL * (tick + 1U), 40000000ULL),
+            0U);
+    }
+    const bool replay = seen[0] == 1U && seen[1] == 1U && seen[2] == 1U &&
+        seen[3] == 0U;
+
+    // Before any tick the present; then the guest's time, never running
+    // backwards and never past the present.
+    Piu10FrameSyncAnswerClock clock;
+    const bool monotonic = clock.Answer(0U, 50U) == 50U &&
+        clock.Answer(30U, 60U) == 50U &&
+        clock.Answer(55U, 60U) == 55U &&
+        clock.Answer(90U, 70U) == 70U;
+
+    const bool valid = lookup && replay && monotonic;
+    std::cout << "piu10_frame_sync_history_probe="
+              << (valid ? "true" : "false") << " lookup=" << lookup
+              << " replay=" << replay << " monotonic=" << monotonic << '\n';
     return valid;
 }
 

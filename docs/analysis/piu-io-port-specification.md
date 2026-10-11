@@ -1375,6 +1375,14 @@ multi-toggles, starvation, empty queue and clock lag.
 **미확정:** 사용자 환경(Linux 실기, 스팀덱, 고주사율 모니터, 녹화 도구)에서 어느 경로가 나오는지. 60 Hz가
 아닌 화면에서는 vsync로 게임이 그 주사율로 돌아 프레임당 tick이 정수가 아니게 된다(144 Hz면 1.67).
 
+**수정 (issue #58, `REPIU_PIU10_FRAME_SYNC_REPLAY`, 기본 켜짐):** 오디오 워커가 frame-sync를 뒤집은 시각을 기록하고
+(`Piu10FrameSyncHistory`), 게스트의 0x2DA 상태 읽기는 핸들러 안이면 그 tick의 due 시각, 밖이면 마지막으로 전달된
+tick의 due 시각의 비트로 답한다(`Piu10FrameSyncAnswerClock`, 되돌아가지 않음). 핸들러 밖 읽기를 "지금"으로 답한
+첫 판은 CAT702 통신이 같은 포트를 읽어(상태 읽기의 70%) 답변 시각을 앞당겼고, +51 ms 가짜 변화와 −190~−449 ms
+되돌아감이 남았다. 캡처를 켠 같은 조건에서 수정 뒤 스테이지 두 곡의 덮어쓰기 16회가 모두 +1.1 또는 −2.9 ms(tick
+하나 안)였다. 남은 큰 점프는 타이틀 곡의 +26.1 ms 한 번으로, 게스트가 290 ms 멈춰 backlog 상한(64 tick)을 넘긴
+tick 폐기다. 곡 사이(공급 함수가 쉬는 구간)의 다중 변화는 곡 위치와 무관하다.
+
 ### English
 
 **Confirmed (pumpipx3 PIU.EXE, object 2 at runtime base 0x04010000):** the timer ISR body `0x0401213D` adds one
@@ -1401,3 +1409,12 @@ several vsync periods (an outside cause such as the capture) and song-change loa
 **Unresolved:** which path the user's setups hit (Linux hardware, the Steam Deck, high-refresh screens, recording
 tools). On a screen other than 60 Hz the game runs at that rate under vsync, so a frame no longer carries a whole
 number of ticks (1.67 at 144 Hz).
+
+**Fix (issue #58, `REPIU_PIU10_FRAME_SYNC_REPLAY`, on by default):** the audio worker records when it flips frame-sync
+(`Piu10FrameSyncHistory`), and a guest read of the 0x2DA status is answered with the bit at the due time of the tick
+whose handler reads it, or outside every handler at the latest delivered tick's (`Piu10FrameSyncAnswerClock`, never
+backwards). A first version answering reads outside handlers at the present was moved ahead by the CAT702 exchange,
+which reads the same port (70% of the status reads), and left a +51 ms phantom change and steps back of −190 to −449
+ms. With the capture running, after the fix all 16 overwrites in two stages were +1.1 or −2.9 ms (within one tick).
+The one large jump left, +26.1 ms in the title song, is ticks dropped when the guest stalled 290 ms past the backlog's
+64-tick bound. Multiple changes between songs, where the feeder idles, do not touch the song position.

@@ -1536,4 +1536,44 @@ bool BuildAotTranslationPlan(const RelocatedRuntimeImage& image,
         image, image.relocated_entry_linear_address, plan);
 }
 
+bool IsAotHleBoundaryBytes(const std::uint8_t* const bytes, const std::uint32_t length)
+{
+    if (bytes == nullptr || length == 0U)
+    {
+        return false;
+    }
+    ZydisDecoder decoder;
+    if (!ZYAN_SUCCESS(ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LEGACY_32,
+                                       ZYDIS_STACK_WIDTH_32)))
+    {
+        return false;
+    }
+    ZydisDecodedInstruction instruction{};
+    ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT] = {};
+    if (!ZYAN_SUCCESS(ZydisDecoderDecodeFull(&decoder, bytes, length, &instruction, operands)))
+    {
+        return false;
+    }
+    return IsHleBoundary(instruction, operands);
+}
+
+bool AotSegmentOverrideRegisterOfBytes(const std::uint8_t* const bytes, const std::uint32_t length,
+                                       std::uint8_t* const segment_register)
+{
+    if (bytes == nullptr || length == 0U || segment_register == nullptr)
+    {
+        return false;
+    }
+    ZydisDecoder decoder;
+    if (!ZYAN_SUCCESS(ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LEGACY_32,
+                                       ZYDIS_STACK_WIDTH_32)))
+    {
+        return false;
+    }
+    ZydisDecodedInstruction instruction{};
+    ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT] = {};
+    return ZYAN_SUCCESS(ZydisDecoderDecodeFull(&decoder, bytes, length, &instruction, operands)) &&
+        IsTranslatableSegmentOverrideMem(instruction, operands, segment_register);
+}
+
 }  // namespace repiu::runtime

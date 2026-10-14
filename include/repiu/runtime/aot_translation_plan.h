@@ -153,6 +153,19 @@ bool BuildAotTranslationPlanFromEntry(
     AotTranslationPlan* plan,
     AotPlanBuildProfile* profile = nullptr);
 
+// Issue #61. Whether the 32-bit instruction in `bytes` is one the AOT plan
+// makes an HLE boundary (IsHleBoundary below its classification): what the
+// emulated model's CPU stops before, so that it runs by the dynamic backend's
+// rules. False for bytes that do not decode.
+bool IsAotHleBoundaryBytes(const std::uint8_t* bytes, std::uint32_t length);
+
+// Issue #61. The segment register (x86 encoding: ES 0, SS 2, DS 3, FS 4, GS 5)
+// of the memory operand a segment override prefix names in the 32-bit
+// instruction in `bytes`, when the AOT plan would translate it as a
+// kSegmentOverrideMem slot. False otherwise.
+bool AotSegmentOverrideRegisterOfBytes(const std::uint8_t* bytes, std::uint32_t length,
+                                       std::uint8_t* segment_register);
+
 }  // namespace repiu::runtime
 
 #endif  // REPIU_RUNTIME_AOT_TRANSLATION_PLAN_H_

@@ -6475,7 +6475,12 @@ bool RunExecutionThread(
     context.enable_traced_dos_hle = enable_traced_dos_hle;
     context.enable_segment_load_hle = enable_segment_load_hle;
     context.enable_dos_hle = enable_dos_hle;
-    context.enable_single_step_trace = enable_single_step_trace;
+    // Issue #61, design decision 9. The emulated CPU holds the guest's virtual
+    // segments itself, so the legacy backend's tracing of every instruction,
+    // which exists to execute segment-relative accesses the host CPU gets
+    // wrong, has nothing to do there. TF the HLE sets itself is still honoured.
+    context.enable_single_step_trace = enable_single_step_trace &&
+        !runtime::execution_model::RunsGuestOnEmulatedCpu();
     context.piu_jamma_board_enabled = enable_piu_jamma_board;
     context.piu10_isa_board_enabled = enable_piu10_isa_board;
     context.aot_placement = aot_placement;

@@ -220,6 +220,40 @@ sequenceDiagram
   물리 슬롯 순서이므로 TOP으로 회전합니다. 덧붙여 `x87_context.cpp`의 `PushX87Float`는 `RegisterArea`를 물리 슬롯
   순서로 다룹니다. 호출하는 곳이 없어 지금은 영향이 없지만, 쓰게 되면 다시 확인해야 합니다.
 
+## 결정 9: `dynamic` 백엔드의 경계 규칙으로 실행한다 (2026-10-14, 사용자 승인)
+
+1차 구현은 `direct`+`legacy`와 처음 2,121 디스패치가 일치했지만, 둘 다 `0x040FD010`의 `gs: cmp`에서 멈췄습니다
+([작업 로그](../work-logs/20261014-i061-emulated-execution-model.md)). `legacy`는 모든 명령을 TF로 멈춰 HLE가 보게
+하는데, HLE가 모르는 형태에서 멈춘 것입니다. 운영 경로인 `dynamic`은 다르게 실행합니다.
+
+**가상 셀렉터를 디스크립터로 넣는 방법은 맞지 않았습니다.** 처음 승인된 안은 게스트의 가상 셀렉터를 rex86에 실제
+디스크립터(`SelectorTable`)로 넣는 것이었습니다. 시도해 보니 rePIU HLE의 세그먼트 의미는 디스크립터 모델이
+아닙니다. 셀렉터 0과 작은 오프셋은 별도 DOS 저메모리 버퍼, DS와 64K 미만 오프셋은 DOS 환경 블록, 32비트 LE
+오브젝트 셀렉터의 표 base는 세그먼트 base가 아니라 오브젝트 위치, 그 밖에는 "base+오프셋이 유효하면 그것, 아니면
+오프셋"입니다. 시도할 때마다 다른 규칙과 부딪혔습니다(평탄이어야 할 DS의 #GP, null 셀렉터, LSL).
+
+**`dynamic`의 실제 규칙** (같은 실행의 trace와 AOT 코드로 확인):
+
+| 대상 | 처리 |
+|---|---|
+| 세그먼트 레지스터 | 늘 호스트 평탄. 게스트의 가상 셀렉터는 HLE의 shadow에만 있습니다 |
+| AOT가 `IsHleBoundary`로 분류한 명령(특권, 세그먼트 override 접두어, 세그먼트 레지스터 피연산자 — `push sreg` 제외, INT·I/O·SEGOP 범주) | HLE 경계 |
+| 경계 중 override 메모리 접근(FS 제외) | 셀렉터 정책(`BuildAotSegmentTable`)이 `kNativeFolded`이면 그 base를 더해 네이티브 실행(평탄 스택·데이터 셀렉터는 base 0), 저메모리·미해결이면 HLE |
+| 그 밖의 경계 | `RequiresVehMediatedHle`가 거짓이면 `DispatchGuestHleInstruction`(셀렉터 자리에 shadow), 참이면 원래 바이트를 실행해 폴트를 VEH로 |
+| 그 밖의 명령 | 그대로 네이티브. 낮은 주소 접근은 페이지 폴트로 HLE |
+
+**`emulated`는 이 규칙을 그대로 씁니다.**
+
+* rex86 [#70](https://github.com/reexec/rex86/issues/70): `Features::host_boundaries`, `Environment::IsHostBoundary`,
+  `StopReason::kHostBoundary`, `Cpu::SkipHostBoundaryOnce`. 명령을 실행하기 전에 호스트에 묻고(디코드마다 한 번),
+  경계면 실행하지 않고 멈춥니다.
+* rePIU: `IsHostBoundary`는 AOT의 `IsHleBoundary`(`IsAotHleBoundaryBytes`)입니다. 경계에서는 위 표의 순서대로
+  처리합니다. 접힌 base 실행은 그 명령 하나 동안만 rex86 세그먼트의 base를 바꾸고 되돌립니다. HLE가 처리하지 않으면
+  `SkipHostBoundaryOnce`로 원래 바이트를 실행하고, 폴트가 나면 `DispatchGuestFault`로 갑니다.
+* 세그먼트는 호스트 평탄 그대로이고, `LoadDescriptor`는 호스트 셀렉터만 받습니다(게스트·null 셀렉터 적재는 #GP로
+  HLE에). TF 전체 추적은 끕니다(`enable_single_step_trace = false`).
+* 대조 기준은 `direct`+`dynamic`입니다. 실행 경로가 다르므로 폴트 단위 일치 대신 화면과 진행으로 비교합니다.
+
 ## 바꾸지 않는 것
 
 * HLE(DOS, DPMI, MSCDEX, Glide, I/O 포트)와 그 입구 `DispatchGuestFault`.
@@ -481,6 +515,42 @@ section replaces them.
   rex86 keeps physical slots, so the conversion rotates by TOP. Incidentally, `PushX87Float` in `x87_context.cpp`
   treats `RegisterArea` as physical-slot order. Nothing calls it, so nothing is affected today, but it should be
   checked again before it is used.
+
+## Decision 9: run by the `dynamic` backend's boundary rules (2026-10-14, approved by the user)
+
+The first pass matched `direct` + `legacy` for the first 2,121 dispatches, but both stopped on a `gs: cmp` at
+`0x040FD010` ([work log](../work-logs/20261014-i061-emulated-execution-model.md)). `legacy` stops every instruction with
+TF for the HLE to see, and it stopped on a form the HLE does not know. The production path, `dynamic`, runs differently.
+
+**Putting the virtual selectors into descriptors did not fit.** The option first approved was to put the guest's virtual
+selectors into rex86 as real descriptors (from `SelectorTable`). Trying it showed that rePIU's HLE does not give segments
+a descriptor model: selector 0 with a small offset is a separate DOS low-memory buffer, DS with an offset below 64K is the
+DOS environment block, a 32-bit LE object selector's table base is where the object was placed rather than a segment base,
+and otherwise "base + offset if that is valid memory, else the offset". Each attempt ran into another of these rules (#GP
+on a DS that must be flat, the null selector, LSL).
+
+**The `dynamic` backend's actual rules** (confirmed with a trace of the same run and the AOT code):
+
+| What | Handling |
+|---|---|
+| Segment registers | Always the host's flat ones. The guest's virtual selectors exist only in the HLE's shadow |
+| Instructions the AOT classifies with `IsHleBoundary` (privileged, segment override prefixes, segment register operands except `push sreg`, the INT/IO/SEGOP categories) | HLE boundaries |
+| Override memory accesses among them (FS excepted) | If the selector's policy (`BuildAotSegmentTable`) is `kNativeFolded`, run natively with that base added (flat stack and data selectors fold to base 0); low memory or unresolved goes to the HLE |
+| Other boundaries | `DispatchGuestHleInstruction` (shadow selectors in the context) when `RequiresVehMediatedHle` is false; otherwise the original bytes run and their fault goes to the VEH |
+| Everything else | Native. Low-address accesses reach the HLE as page faults |
+
+**`emulated` uses those rules as they are.**
+
+* rex86 [#70](https://github.com/reexec/rex86/issues/70): `Features::host_boundaries`, `Environment::IsHostBoundary`,
+  `StopReason::kHostBoundary`, `Cpu::SkipHostBoundaryOnce`. The host is asked before an instruction runs (once per
+  decode), and a boundary stops the core unexecuted.
+* rePIU: `IsHostBoundary` is the AOT's `IsHleBoundary` (`IsAotHleBoundaryBytes`). A boundary is handled in the order of
+  the table above; a folded run changes the rex86 segment's base for that one instruction and restores it. When the HLE
+  leaves it, `SkipHostBoundaryOnce` runs the original bytes, and a fault goes to `DispatchGuestFault`.
+* Segments stay the host's flat ones, and `LoadDescriptor` accepts host selectors only (guest and null selector loads
+  take #GP to the HLE). Tracing every instruction is off (`enable_single_step_trace = false`).
+* The comparison baseline is `direct` + `dynamic`. The execution paths differ, so screens and progress are compared
+  rather than fault-by-fault agreement.
 
 ## What does not change
 

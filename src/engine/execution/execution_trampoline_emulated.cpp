@@ -11,6 +11,8 @@
 // platform layer would have built and goes to DispatchGuestFault, so the HLE
 // that serves the direct model serves this one unchanged.
 
+#include "aot_dbt_hle_dispatch.h"
+#include "aot_runtime_dispatch.h"
 #include "execution_internal.h"
 
 #include "repiu/engine/exception_rescue_win32.h"
@@ -20,6 +22,8 @@
 #include "repiu/platform/host_time.h"
 #include "repiu/platform/thunk_calling_convention.h"
 #include "repiu/platform/virtual_memory.h"
+#include "repiu/runtime/aot_segment_patch.h"
+#include "repiu/runtime/aot_translation_plan.h"
 
 #include "rex86/cpu.h"
 
@@ -85,18 +89,17 @@ public:
     }
 
     // Only the selectors a native guest thread holds are valid: the host's
-    // flat code and data selectors and the TEB's FS. Any other load is the
-    // #GP the HLE emulates natively. The null selector loads (into a data
-    // segment) and faults when used, as on the hardware.
+    // flat code and data selectors and the TEB's FS. Any other load -- a
+    // guest selector, or the null selector -- is the #GP the HLE emulates
+    // natively, which keeps its shadow of the guest's virtual selectors the
+    // one record of them (design decision 9).
     bool LoadDescriptor(const std::uint16_t selector,
                         rex86::Descriptor* const descriptor) override
     {
         *descriptor = rex86::Descriptor{};
         if ((selector & 0xFFFCU) == 0U)
         {
-            descriptor->present = false;
-            descriptor->limit = 0U;
-            return true;
+            return false;
         }
         const std::uint16_t index = static_cast<std::uint16_t>(selector & 0xFFFCU);
         if (index == (host_.cs & 0xFFFCU))
@@ -111,9 +114,26 @@ public:
             descriptor->limit = host_.fs_limit;
             return true;
         }
-        return index == (host_.ds & 0xFFFCU) || index == (host_.es & 0xFFFCU) ||
-            index == (host_.ss & 0xFFFCU) || index == (host_.gs & 0xFFFCU) ||
-            index == (host_.fs & 0xFFFCU);
+        return IsHostSelector(selector);
+    }
+
+    // Design decision 9: the instructions the dynamic backend's AOT plan
+    // makes HLE boundaries -- segment override prefixes, segment register
+    // operands, LAR/LSL, INT, port I/O, privileged instructions -- stop the
+    // emulated CPU before they run, so the HLE serves them as it does there.
+    bool IsHostBoundary(const std::uint8_t* const bytes, const std::uint32_t length) override
+    {
+        return repiu::runtime::IsAotHleBoundaryBytes(bytes, length);
+    }
+
+    // Whether `selector` is one the host thread itself holds.
+    [[nodiscard]] bool IsHostSelector(const std::uint16_t selector) const
+    {
+        const std::uint16_t index = static_cast<std::uint16_t>(selector & 0xFFFCU);
+        return index != 0U &&
+            (index == (host_.cs & 0xFFFCU) || index == (host_.ds & 0xFFFCU) ||
+             index == (host_.es & 0xFFFCU) || index == (host_.ss & 0xFFFCU) ||
+             index == (host_.gs & 0xFFFCU) || index == (host_.fs & 0xFFFCU));
     }
 
     // Under user_mode the core never asks: port I/O and INT n fault first.
@@ -265,7 +285,10 @@ Field AsField(const std::uint32_t value)
     return static_cast<Field>(value);
 }
 
+// The segment registers are reported as the host's, which is what a WOW64
+// CONTEXT shows; the guest's virtual selectors are the HLE's shadow.
 void StateToContext(const rex86::CpuState& state,
+                    const repiu::platform::HostCpuEntryState& host,
                     repiu::platform::GuestCpuContext* const registers)
 {
     std::memset(registers, 0, sizeof(*registers));
@@ -281,12 +304,12 @@ void StateToContext(const rex86::CpuState& state,
     registers->Edi = AsField<Field>(state.Get(rex86::Gpr::kEdi));
     registers->Eip = AsField<Field>(state.eip);
     registers->EFlags = AsField<Field>(state.eflags);
-    registers->SegCs = AsField<Field>(state.Seg(rex86::Segment::kCs).selector);
-    registers->SegDs = AsField<Field>(state.Seg(rex86::Segment::kDs).selector);
-    registers->SegEs = AsField<Field>(state.Seg(rex86::Segment::kEs).selector);
-    registers->SegFs = AsField<Field>(state.Seg(rex86::Segment::kFs).selector);
-    registers->SegGs = AsField<Field>(state.Seg(rex86::Segment::kGs).selector);
-    registers->SegSs = AsField<Field>(state.Seg(rex86::Segment::kSs).selector);
+    registers->SegCs = AsField<Field>(host.cs);
+    registers->SegDs = AsField<Field>(host.ds);
+    registers->SegEs = AsField<Field>(host.es);
+    registers->SegFs = AsField<Field>(host.fs);
+    registers->SegGs = AsField<Field>(host.gs);
+    registers->SegSs = AsField<Field>(host.ss);
 
     // FNSAVE layout: the area holds ST(0) to ST(7), and rex86 keeps physical
     // registers, so the area is the physical file rotated by TOP.
@@ -308,7 +331,8 @@ void StateToContext(const rex86::CpuState& state,
     registers->ContextFlags |= 0x00010008U;  // CONTEXT_FLOATING_POINT
 }
 
-// Loads one of the host's own selectors at entry.
+// Loads a selector into a segment register as the CPU would, or leaves the
+// register unusable when the environment declines it.
 void LoadSegment(EmulatedEnvironment* const environment, rex86::CpuState* const state,
                  const rex86::Segment segment, const std::uint16_t selector)
 {
@@ -459,9 +483,12 @@ public:
         repiu::platform::SetMemoryChangeObserver(nullptr, nullptr);
         std::fprintf(stderr,
                      "[repiu-emulated] guest run ended: %s steps=%llu "
-                     "dispatches=%llu mirrored=%llu\n",
+                     "dispatches=%llu boundaries=%llu/%llu/%llu mirrored=%llu\n",
                      EndName(end), static_cast<unsigned long long>(steps_),
                      static_cast<unsigned long long>(dispatches_),
+                     static_cast<unsigned long long>(boundary_dispatches_),
+                     static_cast<unsigned long long>(boundary_passes_),
+                     static_cast<unsigned long long>(boundary_folds_),
                      static_cast<unsigned long long>(mirrored_));
     }
 
@@ -471,6 +498,7 @@ private:
         rex86::Features features;
         features.user_mode = true;
         features.segments_16bit = true;
+        features.host_boundaries = true;
         return features;
     }
 
@@ -638,6 +666,8 @@ private:
                 return HandleFault(event);
             case rex86::StopReason::kSoftwareInterrupt:
                 return HandleTrapInterrupt(event);
+            case rex86::StopReason::kHostBoundary:
+                return HandleBoundary();
             case rex86::StopReason::kStopRequested:
                 return RunEnd::kStopped;
             default:
@@ -705,6 +735,83 @@ private:
         }
     }
 
+    // An HLE boundary (design decision 9), served as the dynamic backend's
+    // dispatch thunk serves it (aot_dbt_hle_dispatch.cpp): directly through
+    // DispatchGuestHleInstruction, with the HLE's virtual selectors in the
+    // context, unless the boundary must be mediated by the fault handler or
+    // the HLE leaves it alone. Then the instruction runs as it is, and if it
+    // faults, as most mediated ones do under user_mode, the fault reaches
+    // DispatchGuestFault as it would natively.
+    RunEnd HandleBoundary()
+    {
+        rex86::CpuState& cpu_state = cpu_.state();
+        const std::uint32_t eip = cpu_state.eip;
+        // A segment-override memory access whose segment resolves to a
+        // native fold runs as the dynamic backend's slot runs it: with the
+        // resolved base added (aot_segment_patch.cpp). FS stays the HLE's,
+        // as the slot refuses it.
+        std::uint8_t override_segment = 0xFFU;
+        const auto* const code =
+            reinterpret_cast<const std::uint8_t*>(static_cast<std::uintptr_t>(eip));
+        if (repiu::runtime::AotSegmentOverrideRegisterOfBytes(code, 15U, &override_segment) &&
+            override_segment != 4U && override_segment < 6U)
+        {
+            runtime::AotSegmentTable table;
+            BuildAotSegmentTable(context_, &table);
+            const runtime::AotSegmentResolution& resolution = table.segments[override_segment];
+            if (resolution.policy == runtime::AotSegmentAccessPolicy::kNativeFolded)
+            {
+                ++boundary_folds_;
+                return RunFolded(static_cast<rex86::Segment>(override_segment), resolution.base);
+            }
+        }
+        if (!AotDbtHleRequiresVehMediation(context_, eip, cpu_state.Get(rex86::Gpr::kEax)))
+        {
+            ++boundary_dispatches_;
+            repiu::platform::GuestCpuContext registers;
+            StateToContext(cpu_state, environment_.host(), &registers);
+            WriteDebugRegisters(&registers);
+            using Field = decltype(registers.SegDs);
+            registers.SegEs = static_cast<Field>(context_->guest_es);
+            registers.SegSs = static_cast<Field>(context_->guest_ss);
+            registers.SegDs = static_cast<Field>(context_->guest_ds);
+            registers.SegFs = static_cast<Field>(context_->guest_fs);
+            registers.SegGs = static_cast<Field>(context_->guest_gs);
+            const std::uint32_t esp = static_cast<std::uint32_t>(registers.Esp);
+            if (DispatchGuestHleInstruction(&registers, context_) &&
+                static_cast<std::uint32_t>(registers.Eip) != eip &&
+                static_cast<std::uint32_t>(registers.Esp) == esp)
+            {
+                registers.EFlags &= ~kEflagsTrap;
+                ContextToState(registers, &cpu_state);
+                ReadDebugRegisters(registers);
+                return cpu_state.eip == recovery_gate_ ? RunEnd::kRecovered : RunEnd::kContinue;
+            }
+        }
+        ++boundary_passes_;
+        cpu_.SkipHostBoundaryOnce();
+        return RunEnd::kContinue;
+    }
+
+    // Runs the boundary at CS:EIP once with `segment` based at `base`, then
+    // gives the segment back its host descriptor. A fault it takes is
+    // handled like any other.
+    RunEnd RunFolded(const rex86::Segment segment, const std::uint32_t base)
+    {
+        rex86::CpuState& cpu_state = cpu_.state();
+        const bool trap = (cpu_state.eflags & kEflagsTrap) != 0U;
+        rex86::SegmentRegister& target = cpu_state.Seg(segment);
+        const rex86::SegmentRegister saved = target;
+        target.base = base;
+        target.limit = 0xFFFFFFFFU;
+        target.present = true;
+        cpu_.SkipHostBoundaryOnce();
+        const rex86::Event event = cpu_.Step();
+        cpu_state.Seg(segment) = saved;
+        steps_ += event.steps;
+        return Handle(event, trap);
+    }
+
     // INT3, INT1 and INTO still retire and stop under user_mode, as traps
     // through DPL 3 gates do. Windows reports INT3 at the breakpoint itself.
     RunEnd HandleTrapInterrupt(const rex86::Event& event)
@@ -737,7 +844,7 @@ private:
     {
         ++dispatches_;
         repiu::platform::GuestCpuContext registers;
-        StateToContext(cpu_.state(), &registers);
+        StateToContext(cpu_.state(), environment_.host(), &registers);
         WriteDebugRegisters(&registers);
         if (trap_dr6 != 0U)
         {
@@ -853,7 +960,7 @@ private:
     void OfferTimerTick()
     {
         repiu::platform::GuestCpuContext registers;
-        StateToContext(cpu_.state(), &registers);
+        StateToContext(cpu_.state(), environment_.host(), &registers);
         const std::uint32_t eip = static_cast<std::uint32_t>(registers.Eip);
         const std::uint32_t esp = static_cast<std::uint32_t>(registers.Esp);
         WriteDebugRegisters(&registers);
@@ -878,6 +985,10 @@ private:
     std::uint64_t steps_ = 0U;
     std::uint64_t dispatches_ = 0U;
     std::uint64_t mirrored_ = 0U;
+    // Boundaries the HLE served directly, and those run as they are.
+    std::uint64_t boundary_dispatches_ = 0U;
+    std::uint64_t boundary_passes_ = 0U;
+    std::uint64_t boundary_folds_ = 0U;
     // DR0-DR3, DR6 and DR7 as the HLE last wrote them, and which slots are
     // armed as execute breakpoints (gates).
     std::array<std::uint32_t, 4> debug_{};

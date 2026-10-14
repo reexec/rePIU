@@ -35,6 +35,14 @@ bool ResolveExecutionBackend(const char* value, ExecutionBackend* backend);
 
 std::string_view ExecutionBackendName(ExecutionBackend backend);
 
+// Issue #61. What to show a person for the backend: its name, or on the
+// emulated execution model "emulated (rex86)", because there the legacy /
+// dynamic choice does not apply. The model runs without the dynamic backend's
+// code cache, which internally is the legacy value, but it neither traces
+// every instruction as legacy does nor is that what it is compared against
+// (design #61, decision 9). Shown in the window title and the reports.
+std::string_view ExecutionBackendDisplayName(ExecutionBackend backend);
+
 // With only two backends, building the static cache, translating dynamically,
 // and re-entering immediately after an HLE boundary are one and the same
 // condition; separate names would only imply policies that do not differ. A

@@ -525,7 +525,12 @@ bool ReleaseMemory(void* base, const std::size_t bytes)
         }
         ForgetRange(&shadow, start, start + length);
     }
-    return ::munmap(base, length) == 0;
+    if (::munmap(base, length) != 0)
+    {
+        return false;
+    }
+    NotifyMemoryChange(MemoryChange::kProtection, base, length);
+    return true;
 }
 
 bool ProtectMemory(void* address,
@@ -564,6 +569,9 @@ bool ProtectMemory(void* address,
         return false;
     }
     RecordProtection(&shadow, start, end, protection);
+    // Issue #61. Under the shadow lock: the observer only queues the range.
+    NotifyMemoryChange(MemoryChange::kProtection, reinterpret_cast<void*>(start),
+                       static_cast<std::size_t>(end - start));
     return true;
 }
 
@@ -576,6 +584,7 @@ bool FlushInstructionCacheRange(const void* address, const std::size_t bytes)
     // The builtin takes a mutable range even though it only invalidates.
     char* begin = const_cast<char*>(static_cast<const char*>(address));
     __builtin___clear_cache(begin, begin + bytes);
+    NotifyMemoryChange(MemoryChange::kCode, address, bytes);
     return true;
 }
 

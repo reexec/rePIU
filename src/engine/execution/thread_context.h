@@ -181,6 +181,9 @@ struct ThreadContext
     // fact. Set only by `GuestCacheEntryThreadProc`, so it is always false on
     // i386 and that host's decisions are unchanged.
     bool cache_entry_active = false;
+    // Issue #61. The same answer on the emulated model: a guest is running on
+    // the emulated CPU, which has no stack switch to record it.
+    bool emulated_entry_active = false;
     bool enable_privileged_trap_hle = false;
     bool enable_traced_dos_hle = false;
     bool enable_segment_load_hle = false;

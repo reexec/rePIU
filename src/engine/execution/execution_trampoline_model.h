@@ -11,8 +11,9 @@
 
 // Task 759. Where the execution trampoline differs by execution model
 // (repiu/runtime/execution_model.h). Implemented in
-// execution_trampoline_direct.cpp and execution_trampoline_cache.cpp; CMake
-// builds the one that matches the host.
+// execution_trampoline_direct.cpp, execution_trampoline_cache.cpp and
+// execution_trampoline_emulated.cpp; CMake builds the one that matches the
+// host.
 //
 // Each function belongs to one model and is reached only on it; the other
 // model's implementation is an explicit "nothing to do".
@@ -30,6 +31,18 @@ void EnterGuestDirect(ThreadContext* context);
 // The cache model. Installs the dispatch frame and its resolver and enters
 // the emitted cache at the guest's entry; returns when the cache is left.
 void EnterGuestCache(ThreadContext* context);
+
+// Issue #61. The emulated model. Runs the guest on the rex86 CPU core from
+// the state the stack switch would have entered it with, handing every stop a
+// native host would fault on to DispatchGuestFault, until the guest returns,
+// is recovered to the host or is asked to stop.
+void EnterGuestEmulated(StackSwitchCallState* state, ThreadContext* context);
+
+// Issue #61. Asks a running guest to stop from another thread. True on the
+// emulated model, whose guest thread then leaves EnterGuestEmulated at its
+// next boundary; false elsewhere, where the guest thread is interrupted and
+// redirected instead.
+bool RequestGuestStop(ThreadContext* context);
 
 // The cache model. Where a thread is sent to leave the cache: the host return
 // address left by the entry's call. Zero on the direct model.

@@ -38,6 +38,7 @@
 #include "repiu/runtime/aot_translation_plan.h"
 #include "repiu/runtime/env_toggle.h"
 #include "repiu/runtime/execution_backend.h"
+#include "repiu/runtime/execution_model.h"
 #include "repiu/runtime/execution_timeout.h"
 #include "repiu/runtime/image_address.h"
 #include "repiu/runtime/runtime_memory.h"
@@ -5637,6 +5638,15 @@ int main(int argc, char** argv)
         repiu::engine::ReleaseRuntimeAddressRange(
             relocated_arena_reservation);
         return 1;
+    }
+    // Issue #61. The emulated model generates no code, so the dynamic
+    // backend's cache has nothing to run on: it runs the legacy backend,
+    // which is also what it is compared against.
+    if (repiu::runtime::execution_model::RunsGuestOnEmulatedCpu() &&
+        execution_backend != repiu::runtime::ExecutionBackend::kLegacy)
+    {
+        logger->info("emulated execution model: running the legacy backend");
+        execution_backend = repiu::runtime::ExecutionBackend::kLegacy;
     }
     const bool use_dynamic_backend =
         repiu::runtime::ExecutionBackendUsesDynamicTranslation(

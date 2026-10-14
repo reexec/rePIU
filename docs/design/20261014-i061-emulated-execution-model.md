@@ -177,6 +177,49 @@ sequenceDiagram
   없는 구간)의 값을 실제 필요량으로 읽습니다. 이 값이 rex86 번역 범위(x87, REP 문자열)를 넓히는 작업의 근거가
   됩니다.
 
+## 결정 8: 구현 전 조사로 바뀐 것 (2026-10-14)
+
+설계 뒤 코드를 더 읽고 아래를 확인했습니다. 결정 3·4의 해당 부분은 이 절이 대신합니다.
+
+* **rex86 쪽은 [rex86 #69](https://github.com/reexec/rex86/issues/69)로 구현했습니다.** `Features::user_mode` 옵션입니다. 조사 중
+  하나를 더 찾아 같은 옵션에 넣었습니다. CPL 3·IOPL 0에서 `POPF`/`IRET`는 IF와 IOPL을 **폴트 없이 바꾸지
+  않습니다.** 이것을 빼면 게스트의 `PUSHFD`가 네이티브와 다른 값을 봅니다.
+* **`legacy` 백엔드는 게스트 전체를 TF 단일 스텝으로 추적합니다.** 게임 실행은
+  `AttemptGuestStackTrapExecution`이고, 이 함수는 `enable_single_step_trace = true`로 시작합니다. 단일 스텝
+  처리기(`HandleSingleStepTrace`)는 명령마다 HLE 디스패치(세그먼트 override처럼 네이티브에서 폴트가 나지 않는
+  명령의 에뮬레이션), IRQ0 주입, native fast path 진입을 시도합니다. `emulated`는 `legacy` 위에서 돌고
+  (AOT·Glide 직접 디스패치는 `dynamic` 전용), **TF를 그대로 존중합니다.** TF가 켜져 있으면 `Cpu::Step`으로 한
+  명령을 실행하고 `kSingleStep`을 합성합니다. HLE가 TF를 끄면(native fast path) `Run` 슬라이스로 돕니다.
+  네이티브 TF 트랩의 커널 왕복이 함수 호출로 바뀝니다. 대조 기준도 그래서 `direct`+`legacy`입니다.
+* **페이지 속성은 호스트 보호를 비춥니다.** 처음에는 "게스트 구간만 매핑"을 생각했습니다. 하지만 HLE는
+  게스트를 호스트가 만든 페이지로 보냅니다. Glide 게이트 interrupt exit는 호스트 RX 페이지의 x86 코드이고 호스트
+  전역 슬롯을 읽습니다. timer return pad는 예약만 하고 커밋하지 않은 접근 불가 페이지입니다. 그래서 페이지
+  속성표는 처음에 비워 두고, rex86이 낸 접근 위반이 **아직 비추지 않은 페이지**에서 났으면 그 구간의 호스트
+  보호(`QueryMemory`)를 읽어 속성으로 옮긴 뒤 다시 실행합니다. 비춘 뒤에도 접근할 수 없으면 네이티브와 같은
+  폴트로 HLE에 갑니다.
+* **호스트 메모리 변경 관찰자(플랫폼 계층).** `ProtectMemory`와 `ReleaseMemory`는 보호를 바꾸고,
+  `FlushInstructionCacheRange`는 호스트가 코드를 고쳤다는 표시입니다. 플랫폼 계층에 기본 값만 넘기는 관찰자
+  콜백 하나를 둡니다. `emulated` 루프는 보호가 바뀐 구간의 속성을 지워 다음 접근 때 다시 비추고, 코드가 바뀐
+  구간에는 `Cpu::InvalidateCode`를 부릅니다(rex86은 디코드를 캐시하므로 호스트의 코드 쓰기를 알려야 합니다).
+  관찰자는 어느 스레드에서든 불릴 수 있으므로 변경을 큐에 쌓고, 게스트 스레드가 이벤트와 슬라이스 경계에서
+  적용합니다.
+* **복구 게이트는 하나입니다.** HLE가 EIP를 호스트 함수로 보내는 곳은 `RecoverToHost`
+  (`RecoverGuestStackException`) 하나입니다. 이 함수는 TEB와 호스트 스택을 고치므로 **rex86이 절대 실행하면
+  안 됩니다.** 게이트로 등록해 루프를 끝냅니다.
+* **종료.** 호스트의 종료 경로는 다른 스레드에서 게스트 스레드를 interrupt하고, EIP가 게스트 코드 안일 때만
+  복구합니다. `emulated`에서 호스트 EIP는 늘 rex86 안이므로 그 경로는 거절만 반복합니다. 그래서 모델 함수
+  `RequestGuestStop`을 하나 더 둡니다. `emulated`는 정지 플래그와 `Cpu::RequestStop`으로 루프를 세우고, 종료
+  경로는 Glide 명령을 펌프하면서 스레드를 join합니다. `direct`·`cache`는 거짓을 돌려줘 지금 경로를 그대로 탑니다.
+* **스레드 프로시저.** `emulated`는 cache 모델처럼 자기 프로시저 `GuestEmulatedThreadProc`를 갖고,
+  `SelectGuestThreadEntry`가 이를 고릅니다. 진입 가능 여부도 Task 578처럼 술어
+  `RunsGuestOnEmulatedCpu()`를 더해 disjunction으로 묶습니다. `RunsGuestBytesDirectly()`는 `emulated`에서
+  거짓이고, `direct`와 같이 동작해야 하는 지점(timer return pad, Glide 스왑 대기 tick 보류)만 둘을 함께 봅니다.
+* **호스트 셀렉터와 FPU 초기값.** 네이티브 게스트는 진입할 때 호스트 스레드의 세그먼트 셀렉터와 x87 제어
+  워드(MSVC 기본 0x027F)를 물려받습니다. 플랫폼 계층에서 이 값을 읽어 rex86 초기 상태로 씁니다.
+* **x87 변환은 Windows 형식을 따릅니다.** `FloatSave.RegisterArea`는 FNSAVE 형식(ST(i) 순서)이고 rex86은
+  물리 슬롯 순서이므로 TOP으로 회전합니다. 덧붙여 `x87_context.cpp`의 `PushX87Float`는 `RegisterArea`를 물리 슬롯
+  순서로 다룹니다. 호출하는 곳이 없어 지금은 영향이 없지만, 쓰게 되면 다시 확인해야 합니다.
+
 ## 바꾸지 않는 것
 
 * HLE(DOS, DPMI, MSCDEX, Glide, I/O 포트)와 그 입구 `DispatchGuestFault`.
@@ -391,6 +434,53 @@ sequenceDiagram
   (p50/p99) and the actual fps. Loops the game spins while waiting for ticks count as steps too, so the real need is
   read from stretches that run slower than real time (where nothing waits). That figure is the basis for widening
   rex86's translation coverage (x87, REP strings).
+
+## Decision 8: what changed after reading further (2026-10-14)
+
+Reading more of the code after the design confirmed the following. Where it differs from decisions 3 and 4, this
+section replaces them.
+
+* **The rex86 side is done as [rex86 #69](https://github.com/reexec/rex86/issues/69)**, the `Features::user_mode`
+  option. The reading found one more thing, now in the same option: at CPL 3 with IOPL 0, `POPF`/`IRET` **leave IF
+  and IOPL unchanged without a fault**. Without that, the guest's `PUSHFD` would see a different value than it does
+  natively.
+* **The `legacy` backend traces the whole guest by TF single-stepping.** A game runs through
+  `AttemptGuestStackTrapExecution`, which starts with `enable_single_step_trace = true`. On every instruction the
+  single-step handler (`HandleSingleStepTrace`) tries HLE dispatch (emulating instructions that do not fault natively,
+  such as segment overrides), IRQ0 injection and native fast path entry. `emulated` runs on `legacy` (AOT and Glide
+  direct dispatch belong to `dynamic`) and **honours TF as it is**: with TF set it executes one instruction with
+  `Cpu::Step` and synthesizes `kSingleStep`, and when the HLE clears TF (the native fast path) it runs `Run` slices.
+  The kernel round trip of a native TF trap becomes a function call. This is also why the comparison baseline is
+  `direct` + `legacy`.
+* **Page attributes mirror the host's protection.** The first idea was to map only the guest's ranges. But the HLE
+  sends the guest into pages the host made: the Glide gate interrupt exit is x86 code in a host RX page that reads
+  host global slots, and the timer return pad is a reserved, never-committed, no-access page. So the page attribute
+  table starts empty. When rex86 reports an access violation on **a page not yet mirrored**, the host's protection of
+  that range (`QueryMemory`) is copied into the attributes and the instruction runs again. If the page is still
+  inaccessible after mirroring, the fault goes to the HLE as it would natively.
+* **A host memory change observer (in the platform layer).** `ProtectMemory` and `ReleaseMemory` change protection,
+  and `FlushInstructionCacheRange` marks that the host wrote code. The platform layer gets one observer callback
+  taking plain values. The `emulated` loop clears the attributes of ranges whose protection changed, so they are
+  mirrored again on the next access, and calls `Cpu::InvalidateCode` on ranges whose code changed (rex86 caches
+  decodes, so it must be told about the host's code writes). The observer can be called from any thread, so changes
+  are queued and the guest thread applies them at events and slice boundaries.
+* **There is one recovery gate.** The only place the HLE sends EIP to a host function is `RecoverToHost`
+  (`RecoverGuestStackException`). That function rewrites the TEB and the host stack, so **rex86 must never execute
+  it**. It is registered as a gate that ends the loop.
+* **Shutdown.** The host's shutdown path interrupts the guest thread from another thread and recovers only when EIP is
+  in guest code. Under `emulated` the host EIP is always inside rex86, so that path would only ever refuse. A model
+  function `RequestGuestStop` is added: `emulated` stops the loop with a stop flag and `Cpu::RequestStop`, and the
+  shutdown path joins the thread while pumping Glide commands. `direct` and `cache` return false and keep today's path.
+* **The thread procedure.** Like the cache model, `emulated` has its own procedure, `GuestEmulatedThreadProc`, chosen
+  by `SelectGuestThreadEntry`. As in Task 578, whether a guest can be entered gains a predicate,
+  `RunsGuestOnEmulatedCpu()`, joined by disjunction. `RunsGuestBytesDirectly()` is false under `emulated`; only the
+  places that must behave as `direct` does (the timer return pad, holding swap-wait ticks for Glide) look at both.
+* **Host selectors and the initial FPU state.** A native guest inherits the host thread's segment selectors and x87
+  control word (MSVC's default 0x027F) at entry. The platform layer reads them and they become rex86's initial state.
+* **The x87 conversion follows the Windows layout.** `FloatSave.RegisterArea` is the FNSAVE layout (ST(i) order) and
+  rex86 keeps physical slots, so the conversion rotates by TOP. Incidentally, `PushX87Float` in `x87_context.cpp`
+  treats `RegisterArea` as physical-slot order. Nothing calls it, so nothing is affected today, but it should be
+  checked again before it is used.
 
 ## What does not change
 

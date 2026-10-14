@@ -9,13 +9,16 @@
 // guest's own bytes in this process: the `direct` model. An x86-64 host cannot,
 // because long mode reads some of those encodings differently (Task 550), so it
 // runs the translated long-mode code cache instead (Task 546): the `cache`
-// model. A host that runs no guest at all (the web build) is the `none` model.
+// model. A host whose CPU executes no guest instruction at all runs the guest
+// on the rex86 CPU core (issue #61): the `emulated` model, which the web build
+// and ARM hosts need and a 32-bit x86 host can build to compare against
+// `direct`. A host that runs no guest at all is the `none` model.
 //
 // That is the one difference by architecture above the platform layer, and
 // these functions are where shared code asks about it. They are implemented in
-// src/runtime/execution_model_direct.cpp, execution_model_cache.cpp and
-// execution_model_none.cpp; CMake builds the one that matches the host
-// (REPIU_EXECUTION_MODEL). Code that differs by model and needs the engine's
+// src/runtime/execution_model_direct.cpp, execution_model_cache.cpp,
+// execution_model_emulated.cpp and execution_model_none.cpp; CMake builds the
+// one that matches the host (REPIU_EXECUTION_MODEL). Code that differs by model and needs the engine's
 // types sits next to its shared file as <name>_direct.cpp and
 // <name>_cache.cpp.
 
@@ -29,6 +32,12 @@ namespace repiu::runtime::execution_model
 // that what is emitted for it must be long-mode code. Not the negation of the
 // one above: the `none` model answers false to both.
 [[nodiscard]] bool RunsLongModeCodeCache();
+
+// Issue #61. Whether the guest runs on the rex86 CPU core, which stops where a
+// Win32 user-mode process would fault and hands those stops to the same
+// dispatch. False on the other models; like the two above, not the negation
+// of either.
+[[nodiscard]] bool RunsGuestOnEmulatedCpu();
 
 // Task 562. Where an emitted return goes to ask where a guest address lives.
 // Zero where the thunk does not exist, and zero is the answer that matters

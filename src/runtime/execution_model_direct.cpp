@@ -14,6 +14,11 @@ bool RunsGuestBytesDirectly()
     return true;
 }
 
+bool RunsGuestOnEmulatedCpu()
+{
+    return false;
+}
+
 bool RunsLongModeCodeCache()
 {
     return false;

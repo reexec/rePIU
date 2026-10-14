@@ -115,6 +115,10 @@ pumpitea, `legacy` 백엔드에서 두 모델의 HLE 경계 trace를 비교하�
 게임플레이)은 아직 하지 않았습니다. rex86의 wasm 번역 측정(alu 204.7 MIPS, x87·REP가 섞인 혼합 1.4배)과 견주면,
 웹에서 실시간을 내려면 x87과 REP 문자열까지 번역이 넓어져야 할 것으로 보입니다.
 
+### 사용자 확인
+
+사용자가 `emulated` Release로 pumpitea를 직접 실행해 게임이 잘 동작하는 것을 확인했습니다(2026-10-14). 표시 이름은 그 뒤 `8b1830f`에서 `legacy` 대신 `emulated (rex86)`로 바꿨습니다.
+
 ### 남은 것
 
 * 경계 이벤트 단위의 `direct`+`dynamic` 대조(이번에는 화면과 진행으로 확인).
@@ -243,6 +247,10 @@ real time at 60 fps needs **about 75 MIPS**, against the Windows interpreter's 9
 in; per-scene measurements (title, gameplay) are still to be made. Set against rex86's wasm translation figures (alu
 204.7 MIPS, 1.4 times on the mixed workload with x87 and REP strings), real time on the web looks to need translation
 widened to the x87 and REP strings.
+
+### Confirmed by the user
+
+The user ran pumpitea on the `emulated` Release build and confirmed the game works (2026-10-14). The displayed name changed afterwards, in `8b1830f`, from `legacy` to `emulated (rex86)`.
 
 ### Remaining
 

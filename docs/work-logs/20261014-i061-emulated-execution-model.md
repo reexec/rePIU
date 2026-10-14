@@ -55,6 +55,73 @@ pumpitea, `legacy` 백엔드에서 두 모델의 HLE 경계 trace를 비교하�
 그러면 세그먼트 override 명령이 HLE 없이 맞게 실행되고 TF 단일 스텝이 필요 없어집니다. 사용자 결정을 받아
 설계를 갱신합니다.
 
+## 2026-10-14 — 2차: `dynamic`의 경계 규칙으로, 타이틀 도달
+
+사용자가 A안(TF 없이 rex86이 실행하고 HLE는 경계에서만)을 승인했습니다. 구현 방식은 설계 결정 9로 정리했습니다.
+
+### 시도와 철회: 가상 셀렉터를 디스크립터로
+
+처음에는 rex86 데이터 세그먼트에 게스트의 가상 셀렉터를 `SelectorTable`의 디스크립터로 넣고, HLE shadow와 양방향으로
+동기화했습니다. 차례로 부딪힌 것은 다음과 같습니다.
+
+* 32비트 LE 오브젝트 셀렉터의 limit 때문에 평탄이어야 할 DS 접근이 #GP를 냈습니다(표의 base·limit은 오브젝트 위치).
+* null 셀렉터와 `mov eax, fs`: HLE에서 shadow 0은 "레지스터 자체의 값"이라, 네이티브는 호스트 FS(0x53)를 돌려줍니다.
+* `lsl eax, eax`: rex86이 구현하지 않은 명령이었고, HLE의 처리기는 단일 스텝 경로에만 있습니다.
+* HLE의 세그먼트 의미 자체가 디스크립터 모델이 아님을 확인했습니다(`ReadSegmentByte`: 셀렉터 0은 DOS 저메모리 버퍼,
+  DS와 64K 미만은 환경 블록, 그 밖은 "base+오프셋이 유효하면 그것, 아니면 오프셋").
+
+117만 단계까지 갔지만 방향을 바꿨습니다. 이 코드는 커밋하지 않고 걷어냈습니다.
+
+### `dynamic`의 실제 규칙
+
+`direct`+`dynamic`을 같은 trace로 20초 떠서 보니, HLE가 세그먼트 의미를 처리하는 계기는 대부분 낮은 주소의 페이지
+폴트였습니다(`cmp byte [esi],0`, `lodsb`, `rep cmpsb`). AOT 코드에서 분류(`IsHleBoundary`), 직접 디스패치와 VEH
+경유의 구분(`RequiresVehMediatedHle`), override 메모리 접근의 base 접기(`BuildAotSegmentTable`,
+`kNativeFolded`)를 확인했습니다. `legacy`와 직접 디스패치 HLE가 모르는 `gs: cmp byte [eax], 6Ah`를 `dynamic`은 base를
+더한 네이티브 실행으로 처리합니다.
+
+### 구현
+
+* rex86 [#70](https://github.com/reexec/rex86/issues/70)(`cd553eb`): 호스트 경계 명령.
+* rePIU(`5196840`): `IsAotHleBoundaryBytes`, `AotSegmentOverrideRegisterOfBytes`, `AotDbtHleRequiresVehMediation`
+  공개 래퍼. 어댑터의 경계 처리(접기 → 직접 디스패치 → 그대로 실행), `LoadDescriptor`는 호스트 셀렉터만, TF 전체
+  추적 끔.
+
+### 결과 (Windows x86 Release, `emulated`)
+
+| 시점 | 화면 |
+|---|---|
+| 105초 | 인트로("2001 … Stomp your feet") |
+| 180~210초 | 곡 재킷 인트로("FUNKY JOCKEY", "U-TWO 자책", "캉캉") |
+| **300초** | **타이틀 "PUMP IT UP EXTRA", INSERT COIN, CREDIT 0** |
+| 355초 | 데모 플레이(BGA, 화살표 UI) |
+
+`direct`+`dynamic`은 30초에 타이틀, 60초에 데모 플레이였습니다. 화면 내용은 같고 속도만 다릅니다.
+
+| 360초 실행 | 값 |
+|---|---|
+| 실행 단계 | 3,134,265,272 (**약 930만 명령/초**) |
+| 프레임 | 2,506 / 337초 (약 7.4fps; `direct`+`dynamic`은 106초에 6,263, 약 59fps) |
+| **프레임당 명령** | **약 125만** (로딩 포함 평균) |
+| HLE 디스패치(폴트) | 1,932,935 |
+| 경계: 직접 처리 / 그대로 실행 / base 접기 | 11,202,286 / 10,096,252 / 333,409 |
+| 미러링 | 80,453 |
+| 종료 | 정지 요청(시간 제한), 정상 |
+
+### 필요 처리량 (추정)
+
+이 속도에서는 게임이 프레임을 기다리지 않으므로 프레임당 약 125만 명령이 실제 필요량에 가깝습니다. 60fps 실시간에는
+**약 75 MIPS**가 필요하고, 지금 Windows 인터프리터는 약 9.3 MIPS입니다. 로딩 구간이 섞인 평균이고, 장면별 측정(타이틀,
+게임플레이)은 아직 하지 않았습니다. rex86의 wasm 번역 측정(alu 204.7 MIPS, x87·REP가 섞인 혼합 1.4배)과 견주면,
+웹에서 실시간을 내려면 x87과 REP 문자열까지 번역이 넓어져야 할 것으로 보입니다.
+
+### 남은 것
+
+* 경계 이벤트 단위의 `direct`+`dynamic` 대조(이번에는 화면과 진행으로 확인).
+* 장면별 프레임당 명령 측정.
+* 이 모델의 호스트 측 비용(경계 판정, `BuildAotSegmentTable`을 경계마다 다시 만드는 것)의 분해.
+* 문서: frontier·TODO·ARCHITECTURE 갱신(이 커밋).
+
 ### 재현
 
 ```bash
@@ -126,6 +193,62 @@ On `legacy` the title screen cannot be reached (the stop above), and dispatching
 slow. The likely next step is **rex86 running with the guest's virtual selectors as real descriptors** (the design's
 "out of scope" item): segment-override instructions then execute correctly without the HLE, and TF single-stepping is no
 longer needed. The design is updated once the user decides.
+
+## 2026-10-14 — second pass: the `dynamic` backend's boundary rules, and the title screen
+
+The user approved option A (rex86 runs without TF and the HLE sees only boundaries). How it is implemented is recorded
+as design decision 9.
+
+### Tried and withdrawn: virtual selectors as descriptors
+
+The first attempt put the guest's virtual selectors into the rex86 data segments as `SelectorTable` descriptors, synced
+both ways with the HLE shadow. It ran into, one after another: a DS that must be flat taking #GP on a 32-bit LE object
+selector's limit (the table's base and limit are where the object was placed); the null selector and `mov eax, fs` (a
+shadow of 0 means "the register's own value", so natively the host FS, 0x53, is returned); `lsl eax, eax`, which rex86
+did not implement and whose HLE handler is on the single-step path only; and finally that the HLE's segment meaning is
+not a descriptor model at all (`ReadSegmentByte`: selector 0 is the DOS low-memory buffer, DS below 64K is the environment
+block, otherwise "base + offset if valid, else the offset"). It reached 1.17 million steps, and the direction changed;
+that code was removed without being committed.
+
+### The `dynamic` backend's actual rules
+
+A 20-second trace of `direct` + `dynamic` showed the HLE giving segments their meaning mostly at low-address page faults
+(`cmp byte [esi],0`, `lodsb`, `rep cmpsb`). The AOT code gave the classification (`IsHleBoundary`), the split between
+direct dispatch and fault mediation (`RequiresVehMediatedHle`) and the base fold for override memory accesses
+(`BuildAotSegmentTable`, `kNativeFolded`). The `gs: cmp byte [eax], 6Ah` that `legacy` and direct dispatch do not know is
+run natively by `dynamic`, with the base added.
+
+### Implementation
+
+* rex86 [#70](https://github.com/reexec/rex86/issues/70) (`cd553eb`): host boundary instructions.
+* rePIU (`5196840`): the public wrappers `IsAotHleBoundaryBytes`, `AotSegmentOverrideRegisterOfBytes` and
+  `AotDbtHleRequiresVehMediation`; the adapter's boundary handling (fold, then direct dispatch, then run as it is);
+  `LoadDescriptor` accepting host selectors only; whole-run TF tracing off.
+
+### Results (Windows x86 Release, `emulated`)
+
+At 105 s the intro ("2001 ... Stomp your feet"); at 180-210 s the song-jacket intro; **at 300 s the title "PUMP IT UP
+EXTRA" with INSERT COIN and CREDIT 0**; at 355 s the demo play (BGA, the arrow UI). `direct` + `dynamic` showed the title
+at 30 s and the demo play at 60 s: the same screens at a different speed.
+
+Over a 360-second run: 3,134,265,272 steps (**about 9.3 million instructions a second**); 2,506 frames in 337 s (about
+7.4 fps, against `direct` + `dynamic`'s 6,263 in 106 s, about 59 fps); **about 1.25 million instructions a frame**
+(averaged with loading); 1,932,935 fault dispatches; boundaries handled directly / run as they are / folded:
+11,202,286 / 10,096,252 / 333,409; 80,453 mirrorings; ended by the stop request at the time limit, cleanly.
+
+### The throughput needed (an estimate)
+
+At this speed the game never waits for a frame, so about 1.25 million instructions a frame is close to the real need:
+real time at 60 fps needs **about 75 MIPS**, against the Windows interpreter's 9.3. It is an average with loading mixed
+in; per-scene measurements (title, gameplay) are still to be made. Set against rex86's wasm translation figures (alu
+204.7 MIPS, 1.4 times on the mixed workload with x87 and REP strings), real time on the web looks to need translation
+widened to the x87 and REP strings.
+
+### Remaining
+
+A boundary-event comparison against `direct` + `dynamic` (this pass compared screens and progress); per-scene
+instructions per frame; a breakdown of this model's host-side cost (boundary classification, rebuilding
+`BuildAotSegmentTable` at every fold); and the documents: frontier, TODO and ARCHITECTURE (this commit).
 
 ### Reproducing
 

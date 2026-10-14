@@ -7,6 +7,23 @@
 이 문서는 **웹 이식이 지금 어디까지 왔고 왜 멈춰 있는지**만 유지합니다. 단계별 증거는 작업
 로그에, 다섯 단계 계획은 설계에 있습니다.
 
+## 0. 상태 — **재개, 네이티브 `emulated` 모델이 타이틀까지** (2026-10-14, issue #61)
+
+아래 1~6절은 2026-08-28 보류 시점의 기록입니다. 그 뒤 CPU는 [reexec/rex86](https://github.com/reexec/rex86)으로
+분리되어, Stage 3(인터프리터)과 Stage 4(번역)의 중심은 rex86으로 옮겨 갔습니다. 3절의 "먼저 정해야 하는 둘" 중
+x87 표현은 rex86이 80비트로 구현해 해결됐고, Worker 전제는 단일 Worker로 결정됐습니다.
+
+| 항목 | 상태 | 근거 |
+|---|---|---|
+| `emulated` 실행 모델(rex86 위, 네이티브 Windows) | **pumpitea가 300초에 타이틀, 355초에 데모 플레이** | [설계 #61](../design/20261014-i061-emulated-execution-model.md), [로그](../work-logs/20261014-i061-emulated-execution-model.md) |
+| 실행 규칙 | `dynamic` 백엔드의 HLE 경계 분류(`IsHleBoundary`)와 base 접기를 그대로 씀 | 설계 #61 결정 9, rex86 #69·#70 |
+| 처리량 | Windows 인터프리터 약 9.3 MIPS, 약 7.4fps(`dynamic`은 약 59fps) | 로그 2차 |
+| **필요 처리량(추정)** | **프레임당 약 125만 명령, 60fps에 약 75 MIPS** (로딩 포함 평균) | 로그 2차 |
+| 브라우저 실행 | 아직 없음 | — |
+
+**다음 단위:** 브라우저 호스트(단일 Worker, OPFS, WebGL2, AudioWorklet)와, 실시간을 위한 rex86 번역 범위 확대(x87,
+REP 문자열). 장면별 프레임당 명령 측정이 그 우선순위를 정합니다.
+
 ## 1. 상태 — **보류 중** (2026-08-28)
 
 **Stage 1~2가 끝났고, Stage 3~5는 의도적으로 보류했습니다.** 보류 이유는 이 작업에 문제가
@@ -91,6 +108,24 @@ Work logs: [513, the build](../work-logs/20260828-513-web-wasm-build.md) ·
 
 This document keeps only **how far the web port has come and why it is stopped**. The evidence per
 stage is in the work logs, and the five-stage plan is in the design.
+
+## 0. State — **resumed; the native `emulated` model reaches the title** (2026-10-14, issue #61)
+
+Sections 1 to 6 below record the hold of 2026-08-28. Since then the CPU has moved to
+[reexec/rex86](https://github.com/reexec/rex86), and Stages 3 (interpreter) and 4 (translation) are centred there. Of
+section 3's "two things to settle first", the x87 representation is settled (rex86 implements the 80-bit x87), and the
+Worker assumption is decided as a single Worker.
+
+| Item | State | Evidence |
+|---|---|---|
+| The `emulated` execution model (on rex86, native Windows) | **pumpitea shows the title at 300 s and the demo play at 355 s** | [design #61](../design/20261014-i061-emulated-execution-model.md), [log](../work-logs/20261014-i061-emulated-execution-model.md) |
+| Execution rules | the `dynamic` backend's HLE boundary classification (`IsHleBoundary`) and base folds, as they are | design #61 decision 9, rex86 #69 and #70 |
+| Throughput | the Windows interpreter at about 9.3 MIPS, about 7.4 fps (`dynamic`: about 59 fps) | the log's second pass |
+| **Throughput needed (estimate)** | **about 1.25 million instructions a frame, about 75 MIPS at 60 fps** (averaged with loading) | the log's second pass |
+| Running in a browser | not yet | — |
+
+**Next units:** the browser host (single Worker, OPFS, WebGL2, AudioWorklet) and, for real time, wider rex86 translation
+(the x87, REP strings). Per-scene instructions-per-frame measurements set their priority.
 
 ## 1. State — **on hold** (2026-08-28)
 

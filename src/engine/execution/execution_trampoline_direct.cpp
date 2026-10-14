@@ -71,6 +71,20 @@ void EnterGuestCache(ThreadContext* context)
     (void)context;
 }
 
+void EnterGuestEmulated(StackSwitchCallState* state, ThreadContext* context)
+{
+    // The emulated model's.
+    (void)state;
+    (void)context;
+}
+
+bool RequestGuestStop(ThreadContext* context)
+{
+    // This model interrupts the guest thread instead.
+    (void)context;
+    return false;
+}
+
 std::uintptr_t CacheExitAddress()
 {
     return 0U;

@@ -38,6 +38,7 @@
 #include "repiu/runtime/aot_translation_plan.h"
 #include "repiu/runtime/env_toggle.h"
 #include "repiu/runtime/execution_backend.h"
+#include "repiu/runtime/execution_model.h"
 #include "repiu/runtime/execution_timeout.h"
 #include "repiu/runtime/image_address.h"
 #include "repiu/runtime/runtime_memory.h"
@@ -2470,7 +2471,7 @@ void PrintExecutionAttempt(
                 Hex32(attempt.native_linear_span_cancel_dr3_first_eip),
                 Hex32(attempt.native_linear_span_cancel_other_db_first_eip));
     logger.info("execution backend: {}",
-                repiu::runtime::ExecutionBackendName(
+                repiu::runtime::ExecutionBackendDisplayName(
                     attempt.execution_backend));
     logger.info("AOT entry/boundary/reentry/fallback: {}/{}/{}/{}",
                 attempt.aot_cache_entry_count,
@@ -5638,6 +5639,22 @@ int main(int argc, char** argv)
             relocated_arena_reservation);
         return 1;
     }
+    // Issue #61. The legacy / dynamic choice is a native x86 host's and does
+    // not apply on the emulated model: rex86 runs the guest by the dynamic
+    // backend's HLE boundary rules without its code cache. Internally that is
+    // the value without the cache; what is shown is "emulated (rex86)"
+    // (ExecutionBackendDisplayName). An explicit setting is said to be ignored.
+    if (repiu::runtime::execution_model::RunsGuestOnEmulatedCpu())
+    {
+        const char* const requested = std::getenv("REPIU_EXECUTION_BACKEND");
+        if (requested != nullptr && *requested != '\0')
+        {
+            logger->info("REPIU_EXECUTION_BACKEND={} does not apply to the emulated "
+                         "execution model and is ignored",
+                         requested);
+        }
+        execution_backend = repiu::runtime::ExecutionBackend::kLegacy;
+    }
     const bool use_dynamic_backend =
         repiu::runtime::ExecutionBackendUsesDynamicTranslation(
             execution_backend);
@@ -5765,7 +5782,7 @@ int main(int argc, char** argv)
         return 1;
     }
     logger->info("requested execution backend: {}",
-                 repiu::runtime::ExecutionBackendName(execution_backend));
+                 repiu::runtime::ExecutionBackendDisplayName(execution_backend));
     if (use_dynamic_backend)
     {
         logger->info("AOT indirect inline-cache slots: {}",

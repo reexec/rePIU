@@ -1009,7 +1009,7 @@ GlideOpenGlBackend::BuildWindowTitle(double frames_per_second) const {
   stream << "rePIU v" REPIU_VERSION " ("
          << repiu::platform::BuildIdentityLabel() << ") - Build " __DATE__
          << " - Glide 2 OpenGL ["
-         << runtime::ExecutionBackendName(execution_backend_)
+         << runtime::ExecutionBackendDisplayName(execution_backend_)
          << "] - FPS : " << std::fixed << std::setprecision(1)
          << frames_per_second;
   return stream.str();

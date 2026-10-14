@@ -353,6 +353,12 @@ extern "C" void REPIU_THUNK_RESOLVER_CALL ResolveAotDbtHleFrame(
 
 }  // namespace
 
+bool AotDbtHleRequiresVehMediation(ThreadContext* const context, const std::uint32_t guest_eip,
+                                   const std::uint32_t eax)
+{
+    return RequiresVehMediatedHle(context, guest_eip, eax);
+}
+
 void RecordAotDbtHleFallback(
     ThreadContext* context,
     AotDbtHleFallbackReason reason)

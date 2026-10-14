@@ -138,6 +138,23 @@ bool CommitMemory(void* base,
                         win32_protection) != nullptr;
 }
 
+// Issue #61. How far the reservation starting at `base` reaches, walked
+// region by region, because MEM_RELEASE frees all of it whatever a caller
+// passed as its size.
+std::size_t ReservationExtent(void* const base)
+{
+    std::size_t extent = 0U;
+    auto* cursor = static_cast<std::uint8_t*>(base);
+    MEMORY_BASIC_INFORMATION information{};
+    while (VirtualQuery(cursor, &information, sizeof(information)) != 0U &&
+           information.AllocationBase == base && information.RegionSize != 0U)
+    {
+        extent += information.RegionSize;
+        cursor += information.RegionSize;
+    }
+    return extent;
+}
+
 bool ReleaseMemory(void* base, const std::size_t bytes)
 {
     // MEM_RELEASE requires a size of zero and frees the whole reservation, so
@@ -148,7 +165,13 @@ bool ReleaseMemory(void* base, const std::size_t bytes)
     {
         return false;
     }
-    return VirtualFree(base, 0, MEM_RELEASE) != 0;
+    const std::size_t extent = ReservationExtent(base);
+    if (VirtualFree(base, 0, MEM_RELEASE) == 0)
+    {
+        return false;
+    }
+    NotifyMemoryChange(MemoryChange::kProtection, base, extent);
+    return true;
 }
 
 bool ProtectMemory(void* address,
@@ -173,6 +196,7 @@ bool ProtectMemory(void* address,
     {
         *previous = FromProtection(win32_previous);
     }
+    NotifyMemoryChange(MemoryChange::kProtection, address, bytes);
     return true;
 }
 
@@ -182,6 +206,7 @@ bool FlushInstructionCacheRange(const void* address, const std::size_t bytes)
     {
         return false;
     }
+    NotifyMemoryChange(MemoryChange::kCode, address, bytes);
     return FlushInstructionCache(GetCurrentProcess(), address,
                                  static_cast<SIZE_T>(bytes)) != 0;
 }

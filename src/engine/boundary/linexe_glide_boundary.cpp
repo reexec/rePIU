@@ -1191,7 +1191,8 @@ bool GlideSwapWaitTicksEnabled()
     }
     // #6. On the direct model the gate leaves into the timer handler through
     // the interrupt exit; without it the swap stays synchronous.
-    if (runtime::execution_model::RunsGuestBytesDirectly() &&
+    if ((runtime::execution_model::RunsGuestBytesDirectly() ||
+         runtime::execution_model::RunsGuestOnEmulatedCpu()) &&
         GlideGateInterruptExitAddress() == 0U)
     {
         return false;
@@ -1229,8 +1230,12 @@ std::chrono::milliseconds GlideSwapWaitTickHold()
                 return std::chrono::milliseconds(parsed);
             }
         }
+        // Issue #61: the emulated model holds as the direct model does.
         return std::chrono::milliseconds(
-            runtime::execution_model::RunsGuestBytesDirectly() ? 50 : 0);
+            runtime::execution_model::RunsGuestBytesDirectly() ||
+                    runtime::execution_model::RunsGuestOnEmulatedCpu()
+                ? 50
+                : 0);
     }();
     return hold;
 }

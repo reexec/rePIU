@@ -154,6 +154,31 @@ bool FlushInstructionCacheRange(const void* address, std::size_t bytes);
 // crosses from a readable page into an unmapped one is correctly rejected.
 [[nodiscard]] bool IsRangeReadable(const void* address, std::size_t bytes);
 
+// Issue #61. What a successful call above changed, for an observer that keeps
+// its own view of the host's memory -- the emulated execution model's CPU,
+// which checks guest accesses against a page table mirrored from the host
+// rather than taking hardware faults.
+enum class MemoryChange : std::uint8_t
+{
+    // ProtectMemory or ReleaseMemory: the range's protection is no longer what
+    // was last read.
+    kProtection,
+    // FlushInstructionCacheRange: code in the range was rewritten.
+    kCode,
+};
+
+// Called after the change, on whichever thread made it, so it must only
+// record the range. One observer at a time; nullptr removes it.
+using MemoryChangeObserver = void (*)(MemoryChange change,
+                                      std::uintptr_t address,
+                                      std::size_t bytes,
+                                      void* user_data);
+void SetMemoryChangeObserver(MemoryChangeObserver observer, void* user_data);
+
+// For the per-platform implementations above: reports a change to the
+// observer, if any.
+void NotifyMemoryChange(MemoryChange change, const void* address, std::size_t bytes);
+
 }  // namespace repiu::platform
 
 #endif  // REPIU_PLATFORM_VIRTUAL_MEMORY_H_

@@ -73,6 +73,7 @@
 #include "aot_runtime_dispatch.h"
 #include "guest_address_watch.h"
 #include "fault_exit_trace.h"
+#include "hle_boundary_trace.h"
 #include "instruction_emulation.h"
 #include "interrupt_return.h"
 #include "mode16_far_return.h"
@@ -2500,6 +2501,34 @@ bool FinishGuestStackCall(ThreadContext* context,
     return false;
 }
 
+// Issue #61. The emulated model's thread procedure, the same on every host:
+// no stack switch and no fault handler, because the guest runs on the rex86
+// CPU core and hands its stops to DispatchGuestFault itself. What the call
+// state records and what is read back afterwards are the direct model's, so
+// the rest of the engine sees the same run either way.
+std::uint32_t GuestEmulatedThreadProc(void* parameter)
+{
+    ThreadContext* context = static_cast<ThreadContext*>(parameter);
+    if (context == nullptr)
+    {
+        return 1;
+    }
+    context->guest_thread_id = repiu::platform::CurrentThreadId();
+    StackSwitchCallState state;
+    FillGuestStackCallState(context, &state);
+    g_repiu_active_thread_context = context;
+    context->emulated_entry_active = true;
+    trampoline_model::EnterGuestEmulated(&state, context);
+    context->emulated_entry_active = false;
+    std::uint32_t finished_exit_code = 0;
+    if (FinishGuestStackCall(context, state, &finished_exit_code))
+    {
+        return finished_exit_code;
+    }
+    context->returned = true;
+    return 0;
+}
+
 // Task 503d-15 fenced this whole, because CreateThread named the signature and
 // the body is an SEH __try around the guest call. Task 503d-18 takes the first
 // of those away -- the signature is the thread layer's now -- and 503d-19 the
@@ -2567,10 +2596,13 @@ std::uint32_t GuestEntryThreadProc(void* parameter)
     }
 }
 
-// Task 759. The Win32 host runs the direct model only.
+// Task 759. The Win32 host runs the direct model, or since issue #61 the
+// emulated one when it is built for it.
 repiu::platform::HostThreadEntry SelectGuestThreadEntry()
 {
-    return &GuestEntryThreadProc;
+    return runtime::execution_model::RunsGuestOnEmulatedCpu()
+        ? &GuestEmulatedThreadProc
+        : &GuestEntryThreadProc;
 }
 #else   // !defined(_WIN32)
 
@@ -2738,6 +2770,10 @@ std::uint32_t GuestCacheEntryThreadProc(void* parameter)
 // Task 759. The thread procedure of this host's execution model.
 repiu::platform::HostThreadEntry SelectGuestThreadEntry()
 {
+    if (runtime::execution_model::RunsGuestOnEmulatedCpu())
+    {
+        return &GuestEmulatedThreadProc;
+    }
     return runtime::execution_model::RunsLongModeCodeCache()
         ? &GuestCacheEntryThreadProc
         : &GuestEntryThreadProc;
@@ -2751,6 +2787,13 @@ void TraceAotGuestMapForModel(const AotCodeCachePlacement& placement,
                               const char* const phase)
 {
     TraceAotGuestMap(placement, runtime_base, phase);
+}
+
+void CaptureUnhandledGuestFault(const repiu::platform::FaultEvent& fault,
+                                ThreadContext* context)
+{
+    RecordFaultExit(context, fault);
+    CaptureException(fault, context);
 }
 
 bool DispatchGuestHleInstruction(repiu::platform::GuestCpuContext* win32_context,
@@ -4204,7 +4247,10 @@ std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_co
     // Task 762. On the direct model the frame returns to the return pad, and
     // the handler runs without the interrupted code's trace state.
     std::uint32_t frame_eip = eip;
-    if (runtime::execution_model::RunsGuestBytesDirectly() &&
+    // Issue #61: the emulated model takes the pad as the direct model does;
+    // its fetch from the never-committed page faults the same way.
+    if ((runtime::execution_model::RunsGuestBytesDirectly() ||
+         runtime::execution_model::RunsGuestOnEmulatedCpu()) &&
         TimerReturnPadEnabled())
     {
         const std::uint32_t pad = TimerReturnPadAddress();
@@ -4259,6 +4305,7 @@ std::uint32_t InjectPendingInterrupts(repiu::platform::GuestCpuContext* win32_co
     win32_context->Esp = esp;
     win32_context->SegCs = shadow.selector;
     win32_context->Eip = shadow.offset;
+    RecordHleBoundaryInjection(eip, shadow.offset);
     // Task i018. On the direct model the handler used to start at its guest
     // address and run natively until its first fault -- pumpitea's INT8 entry
     // helper `mov ds, cs:[abs]` faulted that way on every tick, outside the
@@ -4596,6 +4643,11 @@ repiu::platform::FaultDisposition DispatchGuestFault(
     {
         return repiu::platform::FaultDisposition::kNotHandled;
     }
+    // Issue #61: the run, fault by fault, for comparing execution models.
+    if (HleBoundaryTraceEnabled())
+    {
+        RecordHleBoundaryFault(fault, VehExitSiteName(context->last_veh_exit_site));
+    }
     if (AotFfTargetTimingEnabled())
     {
         CompleteAotFfTargetTiming(
@@ -4776,7 +4828,7 @@ repiu::platform::FaultDisposition DispatchGuestFault(
         context->active_call_state != nullptr &&
         context->active_call_state->host_esp != 0;
     if (context->use_guest_stack && !guest_stack_entered &&
-        !context->cache_entry_active)
+        !context->cache_entry_active && !context->emulated_entry_active)
     {
         NoteVehExitSite(context, VehExitSite::kGuestStackNotEntered);
         return repiu::platform::FaultDisposition::kNotHandled;
@@ -6315,8 +6367,10 @@ bool RunExecutionThread(
     // are different ways: i386 jumps at the guest's own bytes, x64 enters the
     // emitted cache. `IsDirectX86ExecutionSupported` keeps meaning only the
     // first, so the routing is a disjunction rather than a loosened predicate.
+    // Issue #61: the emulated model is a third way, and joins the same way.
     attempt->supported =
-        IsDirectX86ExecutionSupported() || IsCodeCacheEntrySupported();
+        IsDirectX86ExecutionSupported() || IsCodeCacheEntrySupported() ||
+        runtime::execution_model::RunsGuestOnEmulatedCpu();
     attempt->guest_stack_switch_supported = IsGuestStackSwitchSupported();
     attempt->guest_stack_initial_esp = guest_initial_esp;
 
@@ -6339,7 +6393,8 @@ bool RunExecutionThread(
     // `IsDirectX86ExecutionSupported` does. The refusal below is the one that
     // has to know about both mechanisms.
     if (use_guest_stack && !attempt->guest_stack_switch_supported &&
-        !IsCodeCacheEntrySupported())
+        !IsCodeCacheEntrySupported() &&
+        !runtime::execution_model::RunsGuestOnEmulatedCpu())
     {
         attempt->valid = true;
         attempt->message =
@@ -6420,7 +6475,12 @@ bool RunExecutionThread(
     context.enable_traced_dos_hle = enable_traced_dos_hle;
     context.enable_segment_load_hle = enable_segment_load_hle;
     context.enable_dos_hle = enable_dos_hle;
-    context.enable_single_step_trace = enable_single_step_trace;
+    // Issue #61, design decision 9. The emulated CPU holds the guest's virtual
+    // segments itself, so the legacy backend's tracing of every instruction,
+    // which exists to execute segment-relative accesses the host CPU gets
+    // wrong, has nothing to do there. TF the HLE sets itself is still honoured.
+    context.enable_single_step_trace = enable_single_step_trace &&
+        !runtime::execution_model::RunsGuestOnEmulatedCpu();
     context.piu_jamma_board_enabled = enable_piu_jamma_board;
     context.piu10_isa_board_enabled = enable_piu10_isa_board;
     context.aot_placement = aot_placement;
@@ -7377,6 +7437,23 @@ bool RunExecutionThread(
             repiu::platform::ThreadInterruptFailure::kNone;
         bool interrupt_answered = false;
         std::uint32_t recovery_attempts = 0;
+        // Issue #61. A guest thread running on the emulated CPU is never in
+        // guest code as far as the host can see, so it is asked to stop
+        // rather than interrupted, and joined while the gate keeps being
+        // served for the same reason as below.
+        if (trampoline_model::RequestGuestStop(&context))
+        {
+            while (recovery_attempts < kShutdownRecoveryAttempts &&
+                   !recovery_request.recovered)
+            {
+                ++recovery_attempts;
+                context.glide_backend.PumpHostCommands();
+                recovery_request.recovered = repiu::platform::JoinHostThread(
+                    thread, kShutdownRecoveryRetryMilliseconds, nullptr);
+            }
+            interrupt_answered = recovery_request.recovered;
+            recovery_attempts = kShutdownRecoveryAttempts;
+        }
         while (recovery_attempts < kShutdownRecoveryAttempts)
         {
             ++recovery_attempts;

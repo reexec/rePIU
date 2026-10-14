@@ -49,6 +49,24 @@ else()
     set(REPIU_EXECUTION_MODEL none)
 endif()
 
+# Issue #61: the emulated model runs the guest on the rex86 CPU core, so this
+# process executes none of its bytes. A 32-bit x86 host builds it on request,
+# in its own build tree, to compare it against direct.
+set(REPIU_EXECUTION_MODEL_OVERRIDE "" CACHE STRING
+    "Build this execution model instead of the host's (only: emulated)")
+if(REPIU_EXECUTION_MODEL_OVERRIDE)
+    if(NOT REPIU_EXECUTION_MODEL_OVERRIDE STREQUAL "emulated")
+        message(FATAL_ERROR
+            "REPIU_EXECUTION_MODEL_OVERRIDE must be empty or emulated")
+    endif()
+    if(NOT REPIU_ARCH STREQUAL "x86")
+        message(FATAL_ERROR
+            "the emulated model is built on a 32-bit x86 host for now")
+    endif()
+    set(REPIU_EXECUTION_MODEL emulated)
+endif()
+message(STATUS "rePIU execution model: ${REPIU_EXECUTION_MODEL}")
+
 # Task 767: release builds link the C++ runtime statically so the Linux
 # archives run on distributions whose libstdc++ is older than the build host's.
 # Off by default: local builds keep the system runtime.
@@ -114,6 +132,19 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(minimp3)
 
+# Issue #61: the rex86 CPU core, pinned to a release tag (rex86 design #1,
+# decision 6). Changing both repositories together, point
+# FETCHCONTENT_SOURCE_DIR_REX86 at a sibling checkout.
+if(REPIU_EXECUTION_MODEL STREQUAL "emulated")
+    FetchContent_Declare(
+        rex86
+        GIT_REPOSITORY https://github.com/reexec/rex86.git
+        GIT_TAG v0.0.34
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(rex86)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -154,6 +185,12 @@ if(MSVC)
                      $<$<CONFIG:Release>:/OPT:ICF>)
 endif()
 
+# Issue #61: rex86 builds the same Zydis amalgamation (4.1.1), and two copies
+# in one link collide, so a build with rex86 uses rex86's.
+if(TARGET rex86_zydis)
+    add_library(repiu_zydis INTERFACE)
+    target_link_libraries(repiu_zydis INTERFACE rex86_zydis)
+else()
 add_library(repiu_zydis STATIC
     third_party/zydis/Zydis.c
 )
@@ -165,6 +202,7 @@ target_compile_definitions(repiu_zydis
     PUBLIC
         ZYDIS_STATIC_BUILD
 )
+endif()
 
 function(repiu_configure_win32_loader_host target_name)
     if(MSVC AND WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
@@ -288,6 +326,7 @@ add_library(repiu_exe
     src/platform/build_identity.cpp
     src/platform/host_thread.cpp
     src/platform/host_time.cpp
+    src/platform/memory_change_observer.cpp
     src/platform/fault_report_state.cpp
 )
 
@@ -367,6 +406,7 @@ target_sources(repiu_exe
         src/engine/boundary/linexe_glide_boundary.cpp
         src/engine/boundary/timer_interrupt_boundary.cpp
         src/engine/telemetry/final_execution_report.cpp
+        src/engine/telemetry/hle_boundary_trace.cpp
         src/engine/telemetry/live_telemetry_snapshot.cpp
         src/engine/telemetry/execution_time_profile.cpp
         src/engine/telemetry/live_execution_profile_report.cpp
@@ -493,6 +533,7 @@ if(REPIU_PLATFORM STREQUAL "win32")
     if(NOT EMSCRIPTEN)
         target_sources(repiu_exe
             PRIVATE
+                src/platform/win32/host_cpu_entry_state_win32.cpp
                 src/platform/win32/host_crash_report_win32.cpp
                 src/platform/win32/host_fault_report_win32.cpp
                 src/platform/win32/host_gpu_driver_win32.cpp
@@ -514,6 +555,7 @@ if(REPIU_PLATFORM STREQUAL "linux")
     target_sources(repiu_exe
         PRIVATE
             # Task 759: what the engine asks of the host beyond running the guest.
+            src/platform/linux/host_cpu_entry_state.cpp
             src/platform/linux/host_crash_report.cpp
             src/platform/linux/host_fault_report.cpp
             src/platform/linux/host_gpu_driver.cpp
@@ -703,6 +745,9 @@ target_compile_definitions(repiu_exe
 )
 
 target_link_libraries(repiu_exe PRIVATE repiu_zydis chdr-static)
+if(REPIU_EXECUTION_MODEL STREQUAL "emulated")
+    target_link_libraries(repiu_exe PRIVATE rex86::core)
+endif()
 
 # PUBLIC, not PRIVATE: SDL_Keycode and SDL_Keymod appear in the public input
 # binding headers, so SDL3's include directories are part of this library's

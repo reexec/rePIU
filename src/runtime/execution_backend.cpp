@@ -1,5 +1,7 @@
 #include "repiu/runtime/execution_backend.h"
 
+#include "repiu/runtime/execution_model.h"
+
 namespace repiu::runtime
 {
 
@@ -49,6 +51,12 @@ std::string_view ExecutionBackendName(ExecutionBackend backend)
             return "dynamic";
     }
     return "legacy";
+}
+
+std::string_view ExecutionBackendDisplayName(ExecutionBackend backend)
+{
+    return execution_model::RunsGuestOnEmulatedCpu() ? "emulated (rex86)"
+                                                      : ExecutionBackendName(backend);
 }
 
 bool ExecutionBackendUsesDynamicTranslation(ExecutionBackend backend)

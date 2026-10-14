@@ -10,6 +10,8 @@
 
 #include "thread_context.h"
 
+#include "repiu/platform/fault_handler.h"
+
 #include <cstddef>
 #include <cstdint>
 
@@ -68,6 +70,12 @@ std::uint32_t InjectPendingInterrupts(
 
 bool DispatchGuestHleInstruction(repiu::platform::GuestCpuContext* win32_context,
                                  ThreadContext* context);
+
+// Issue #61. Records a fault DispatchGuestFault declined as the end of the
+// guest's run, as the direct model's SEH filter does: the emulated model has
+// no host exception to unwind and calls this instead.
+void CaptureUnhandledGuestFault(const repiu::platform::FaultEvent& fault,
+                                ThreadContext* context);
 
 bool CanResumeLinuxX64LegacyTarget(ThreadContext* context,
                                    std::uint32_t guest_target);

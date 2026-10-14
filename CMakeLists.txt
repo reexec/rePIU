@@ -139,7 +139,7 @@ if(REPIU_EXECUTION_MODEL STREQUAL "emulated")
     FetchContent_Declare(
         rex86
         GIT_REPOSITORY https://github.com/reexec/rex86.git
-        GIT_TAG v0.0.33
+        GIT_TAG v0.0.34
         GIT_SHALLOW TRUE
     )
     FetchContent_MakeAvailable(rex86)

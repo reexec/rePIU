@@ -119,6 +119,10 @@ pumpitea, `legacy` 백엔드에서 두 모델의 HLE 경계 trace를 비교하�
 
 사용자가 `emulated` Release로 pumpitea를 직접 실행해 게임이 잘 동작하는 것을 확인했습니다(2026-10-14). 표시 이름은 그 뒤 `8b1830f`에서 `legacy` 대신 `emulated (rex86)`로 바꿨습니다.
 
+### rex86 v0.0.34 고정 (2026-10-15)
+
+rex86 #69·#70이 v0.0.34로 머지되고(PR #71, `1694dc4`) tag 캠페인이 성공했습니다([실행 38587588888](https://github.com/reexec/rex86/actions/runs/38587588888)). CMake의 rex86 tag를 v0.0.33에서 v0.0.34로 올리고, `FETCHCONTENT_SOURCE_DIR_REX86` 없이 GitHub에서 받은 새 트리(`build/win32_x86_emulated_tag`)로 Release 빌드와 20초 실행을 확인했습니다.
+
 ### 남은 것
 
 * 경계 이벤트 단위의 `direct`+`dynamic` 대조(이번에는 화면과 진행으로 확인).
@@ -251,6 +255,10 @@ widened to the x87 and REP strings.
 ### Confirmed by the user
 
 The user ran pumpitea on the `emulated` Release build and confirmed the game works (2026-10-14). The displayed name changed afterwards, in `8b1830f`, from `legacy` to `emulated (rex86)`.
+
+### rex86 pinned to v0.0.34 (2026-10-15)
+
+rex86 #69 and #70 merged as v0.0.34 (PR #71, `1694dc4`) and the tag's campaign succeeded ([run 38587588888](https://github.com/reexec/rex86/actions/runs/38587588888)). CMake's rex86 tag moved from v0.0.33 to v0.0.34, and a fresh tree fetching it from GitHub without `FETCHCONTENT_SOURCE_DIR_REX86` (`build/win32_x86_emulated_tag`) built in Release and ran for 20 seconds.
 
 ### Remaining
 

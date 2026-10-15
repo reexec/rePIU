@@ -4873,19 +4873,21 @@ chose no driver).
   `src/platform/linux/x86/`의 `.S`, Linux x64는 `src/platform/linux/x64/`의 `.S`입니다. 엔진의 resolver와
   스레드 컨텍스트는 C 심볼 이름으로 가리킵니다.
 * **CPU 아키텍처에 따른 차이는 실행 모델**입니다. `direct`는 게스트의 바이트를 이 프로세스에서 그대로
-  실행하고(Win32, Linux i386), `cache`는 번역한 long mode 코드 캐시를 실행하며(Linux x64), `none`은 게스트를
-  실행하지 않습니다(웹 빌드). 공용 코드는 `include/repiu/runtime/execution_model.h`의 함수
-  (`RunsGuestBytesDirectly`, `RunsLongModeCodeCache`, `LongModeReturnThunkAddress`,
-  `InjectsTicksDuringSwapWait`)로 묻고, 구현은 `src/runtime/execution_model_{direct,cache,none}.cpp`입니다.
+  실행하고(Win32, Linux i386), `cache`는 번역한 long mode 코드 캐시를 실행하며(Linux x64), `emulated`는
+  rex86 CPU 코어가 게스트를 실행하고(issue #61: 웹과 ARM 호스트용, Win32에서
+  `-DREPIU_EXECUTION_MODEL_OVERRIDE=emulated`로 개발용 빌드), `none`은 게스트를 실행하지 않습니다(지금의 웹
+  빌드). 공용 코드는 `include/repiu/runtime/execution_model.h`의 함수
+  (`RunsGuestBytesDirectly`, `RunsLongModeCodeCache`, `RunsGuestOnEmulatedCpu`, `LongModeReturnThunkAddress`,
+  `InjectsTicksDuringSwapWait`)로 묻고, 구현은 `src/runtime/execution_model_{direct,cache,emulated,none}.cpp`입니다.
   CMake의 `REPIU_EXECUTION_MODEL`이 고릅니다.
 * **모델에 따라 다르고 엔진의 타입이 필요한 코드**는 공용 파일 옆에 `<이름>_direct.cpp`,
-  `<이름>_cache.cpp`로 있습니다.
+  `<이름>_cache.cpp`, `<이름>_emulated.cpp`로 있습니다.
 
   | 공용 파일 | 내부 인터페이스 | 모델 파일이 맡는 것 |
   |---|---|---|
-  | `execution/execution_trampoline.cpp` | `execution_trampoline_model.h` | direct: 게스트로의 두 진입. cache: 반환 thunk가 묻는 resolver, 캐시 진입, 캐시 출구, 종료 복구의 호스트 주소, 반환 추적 |
-  | `aot/aot_dbt_*_dispatch.cpp` | 각 헤더의 `Get…ThunkAddress` | `aot_dbt_dispatch_thunks_direct.cpp`: 다섯 thunk의 주소. `_cache.cpp`: long mode Glide 게이트 thunk와 그 resolver |
-  | `native_phase_sampler.cpp` | `native_phase_sampler_model.h` | 샘플을 어떻게 뜨는가 |
+  | `execution/execution_trampoline.cpp` | `execution_trampoline_model.h` | direct: 게스트로의 두 진입. cache: 반환 thunk가 묻는 resolver, 캐시 진입, 캐시 출구, 종료 복구의 호스트 주소, 반환 추적. emulated: rex86 위의 진입, 멈춤을 `FaultEvent`로 바꾸는 것, 슬라이스 반복, 정지 요청 |
+  | `aot/aot_dbt_*_dispatch.cpp` | 각 헤더의 `Get…ThunkAddress` | `aot_dbt_dispatch_thunks_direct.cpp`: 다섯 thunk의 주소. `_cache.cpp`: long mode Glide 게이트 thunk와 그 resolver. `_emulated.cpp`: 모두 null(생성 코드가 없음) |
+  | `native_phase_sampler.cpp` | `native_phase_sampler_model.h` | 샘플을 어떻게 뜨는가. emulated는 뜨지 않음 |
 
   공용 파일에 남은 모델 분기는 `if (runtime::execution_model::RunsLongModeCodeCache())`로 감싼 같은
   코드입니다. 처리한 경계 뒤의 재개는 `ResumeHandledBoundary` 하나가 맡습니다.
@@ -4917,18 +4919,20 @@ differs by host goes to one of two places.
   They name the engine's resolvers and thread context by their C symbols.
 * **The difference by CPU architecture is the execution model.** `direct` runs the guest's bytes in this
   process as they are (Win32, Linux i386), `cache` runs the translated long-mode code cache (Linux x64),
-  and `none` runs no guest (the web build). Shared code asks through the functions of
-  `include/repiu/runtime/execution_model.h` (`RunsGuestBytesDirectly`, `RunsLongModeCodeCache`,
+  `emulated` has the rex86 CPU core run the guest (issue #61: for the web and ARM hosts, built on Win32
+  for development with `-DREPIU_EXECUTION_MODEL_OVERRIDE=emulated`), and `none` runs no guest (today's
+  web build). Shared code asks through the functions of `include/repiu/runtime/execution_model.h`
+  (`RunsGuestBytesDirectly`, `RunsLongModeCodeCache`, `RunsGuestOnEmulatedCpu`,
   `LongModeReturnThunkAddress`, `InjectsTicksDuringSwapWait`), implemented in
-  `src/runtime/execution_model_{direct,cache,none}.cpp`. CMake's `REPIU_EXECUTION_MODEL` picks.
+  `src/runtime/execution_model_{direct,cache,emulated,none}.cpp`. CMake's `REPIU_EXECUTION_MODEL` picks.
 * **Code that differs by model and needs the engine's types** sits next to its shared file as
-  `<name>_direct.cpp` and `<name>_cache.cpp`.
+  `<name>_direct.cpp`, `<name>_cache.cpp` and `<name>_emulated.cpp`.
 
   | Shared file | Internal interface | What the model files hold |
   |---|---|---|
-  | `execution/execution_trampoline.cpp` | `execution_trampoline_model.h` | direct: the two entries into the guest. cache: the resolver the return thunk asks, the entry into the cache, the cache's exit, the host address for shutdown recovery, the return traces |
-  | `aot/aot_dbt_*_dispatch.cpp` | `Get…ThunkAddress` in each header | `aot_dbt_dispatch_thunks_direct.cpp`: the five thunks' addresses. `_cache.cpp`: the long-mode Glide gate thunk and its resolver |
-  | `native_phase_sampler.cpp` | `native_phase_sampler_model.h` | how a sample is taken |
+  | `execution/execution_trampoline.cpp` | `execution_trampoline_model.h` | direct: the two entries into the guest. cache: the resolver the return thunk asks, the entry into the cache, the cache's exit, the host address for shutdown recovery, the return traces. emulated: the entry on rex86, turning its stops into `FaultEvent`s, the slice loop, the stop request |
+  | `aot/aot_dbt_*_dispatch.cpp` | `Get…ThunkAddress` in each header | `aot_dbt_dispatch_thunks_direct.cpp`: the five thunks' addresses. `_cache.cpp`: the long-mode Glide gate thunk and its resolver. `_emulated.cpp`: all null (no generated code) |
+  | `native_phase_sampler.cpp` | `native_phase_sampler_model.h` | how a sample is taken; emulated takes none |
 
   The model branches left in shared files are the same code inside
   `if (runtime::execution_model::RunsLongModeCodeCache())`. The continuation after a handled boundary is

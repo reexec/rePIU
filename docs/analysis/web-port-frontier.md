@@ -23,9 +23,9 @@ x87 표현은 rex86이 80비트로 구현해 해결됐고, Worker 전제는 단�
 | 처리량 지표 (추정) | 단일 스레드에서 실행 단계는 29% 줄었지만 화면 교체 수는 같고 HLE 진행은 같거나 앞섬. **실행 단계/초에는 게스트의 대기 루프가 섞여 있어** 위의 75 MIPS는 상한으로 봐야 함 | 로그 #64 |
 | **wasm 실행 (Node)** (issue #67 단계 2) | **엔진과 rex86이 wasm32로 빌드되어 Node에서 pumpitea를 실행.** 약 6.1 MIPS(같은 PC의 네이티브 `emulated`와 비슷), 경계 trace가 네이티브와 첫 벽시계 의존까지 같음(재배치 제외). 웹 core probe 36/36 | [설계 #67](../design/20261015-i067-emscripten-headless.md), [로그](../work-logs/20261015-i067-emscripten-headless.md) |
 | **GLES 3 / WebGL2 렌더러** (issue #69 단계 3) | **확인됨(네이티브).** Glide 렌더러가 GL 3.3 core와 ES 3.0의 공통 부분집합만 씀: 스트리밍 VBO, shader 투영·알파 테스트, front/back offscreen FBO 쌍. Windows GL 3.3 core에서 결정적 장면 probe 4개가 GL 2.1 호환 렌더러와 화소 일치, pumpit8 vsync OFF 처리량 동일. 웹 빌드는 고정 기능 stub 없이 링크(브라우저 화면은 단계 4) | [설계 #69](../design/20261016-i069-gles3-renderer.md), [로그](../work-logs/20261016-i069-gles3-renderer.md) |
-| 브라우저 실행 | 아직 없음 | — |
+| **브라우저 실행** (issue #72 단계 4 단위 1) | **확인됨(headless Chrome).** 페이지의 Worker에서 pumpitea가 돌아 WebGL2 캔버스에 약 4분에 타이틀, 약 400초에 데모 플레이(CHD에서 428 MB를 메모리에 푸는 55초 포함). Asyncify 양보는 호스트 차례에서만. 소리·입력 없음 | [설계 #72](../design/20261016-i072-browser-page.md), [로그](../work-logs/20261016-i072-browser-page.md) |
 
-**다음 단위:** 브라우저 호스트 단계 4(페이지: Worker, OffscreenCanvas, OPFS, AudioWorklet, 입력)
+**다음 단위:** 단계 4 단위 2(입력, 소리 → AudioWorklet), 단위 3(OPFS 영구 저장, Pages 배포)
 ([설계 #64](../design/20261015-i064-browser-host-single-thread-loop.md)). 실시간을 위한 rex86 번역 범위 확대(x87, REP
 문자열)는 대기 루프를 뺀 장면별 측정이 우선순위를 정합니다.
 
@@ -131,9 +131,9 @@ Worker assumption is decided as a single Worker.
 | Throughput measure (inferred) | on one thread the steps fell by 29% but the buffer swaps are equal and the HLE progress is equal or ahead. **Steps per second include the guest's wait loops**, so the 75 MIPS above is an upper bound | log #64 |
 | **Running as wasm (Node)** (issue #67 phase 2) | **the engine and rex86 build for wasm32 and run pumpitea under Node** at about 6.1 MIPS (close to native `emulated` on the same PC); the boundary trace matches native up to the first wall-clock dependence, relocation aside; the web core probe passes 36/36 | [design #67](../design/20261015-i067-emscripten-headless.md), [log](../work-logs/20261015-i067-emscripten-headless.md) |
 | **GLES 3 / WebGL2 renderer** (issue #69 phase 3) | **confirmed (natively).** The Glide renderer uses only the subset GL 3.3 core and ES 3.0 share: a streaming VBO, the projection and alpha test in the shader, a front/back pair of offscreen FBOs. On Windows GL 3.3 core the four deterministic probe scenes match the GL 2.1 compatibility renderer pixel for pixel, and pumpit8's vsync-OFF throughput is unchanged. The web build links without fixed-function stubs (the browser picture is phase 4) | [design #69](../design/20261016-i069-gles3-renderer.md), [log](../work-logs/20261016-i069-gles3-renderer.md) |
-| Running in a browser | not yet | — |
+| **Running in a browser** (issue #72 phase 4 unit 1) | **confirmed (headless Chrome).** pumpitea runs in the page's Worker and draws to a WebGL2 canvas: the title at about 4 minutes, demo play at about 400 s (including the 55 s spent unpacking 428 MB from the CHD into memory). Asyncify yields only at the host turn. No sound or input | [design #72](../design/20261016-i072-browser-page.md), [log](../work-logs/20261016-i072-browser-page.md) |
 
-**Next unit:** browser host phase 4 (the page: Worker, OffscreenCanvas, OPFS, AudioWorklet, input) ([design #64](../design/20261015-i064-browser-host-single-thread-loop.md)). Wider rex86 translation for real time
+**Next units:** phase 4 unit 2 (input, sound → AudioWorklet) and unit 3 (OPFS persistence, Pages deployment) ([design #64](../design/20261015-i064-browser-host-single-thread-loop.md)). Wider rex86 translation for real time
 (the x87, REP strings) is prioritised by per-scene measurements with the wait loops taken out.
 
 ## 1. State — **on hold** (2026-08-28)

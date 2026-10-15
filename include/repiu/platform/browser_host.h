@@ -19,6 +19,10 @@ bool CreateBrowserGlContext(int* width, int* height);
 bool BrowserCanvasSize(int* width, int* height);
 void DestroyBrowserGlContext();
 
+// Finds a WebGL2 function by its OpenGL ES name, for the context above.
+using BrowserGlFunction = void (*)();
+BrowserGlFunction BrowserGlProcAddress(const char* name);
+
 // Hands the thread back to the page's event loop once -- the canvas shows
 // what was drawn and messages are handled -- and returns when it is given
 // back. Does nothing unless the page asked for yields; true when it yielded.

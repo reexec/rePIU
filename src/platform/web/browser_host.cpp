@@ -6,6 +6,7 @@
 #include "repiu/platform/browser_host.h"
 
 #include <emscripten.h>
+#include <emscripten/html5_webgl.h>
 
 namespace
 {
@@ -109,6 +110,12 @@ bool BrowserCanvasSize(int* width, int* height)
 void DestroyBrowserGlContext()
 {
     RepiuDestroyBrowserGlContext();
+}
+
+BrowserGlFunction BrowserGlProcAddress(const char* name)
+{
+    return reinterpret_cast<BrowserGlFunction>(
+        emscripten_webgl_get_proc_address(name));
 }
 
 bool YieldToHostEventLoop()

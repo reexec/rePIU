@@ -1253,6 +1253,60 @@ if(EMSCRIPTEN)
     )
     set_property(TARGET repiu APPEND PROPERTY LINK_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/node_pre.js")
+
+    # Issue #72: the same loader for a browser page's Worker (design
+    # 20261016-i072). worker.js mounts the ROM files the user picked with
+    # WORKERFS, hands over the page's OffscreenCanvas and calls main. The
+    # single-threaded loop yields to the page at the host turn through
+    # Asyncify; indirect calls are ignored so that rex86's callbacks into the
+    # HLE and its interpreter stay uninstrumented, and the one indirect call
+    # on the way down to the yield -- RunGuestOnThisThread calling the guest
+    # thread procedure -- is added by name; Asyncify adds its callers.
+    add_executable(repiu_browser
+        src/host/loader/main.cpp
+        src/launcher/launcher_ui.cpp
+    )
+    target_link_libraries(repiu_browser
+        PRIVATE
+            repiu_exe
+            repiu_imgui
+            spdlog::spdlog_header_only
+    )
+    repiu_link_web_engine(repiu_browser)
+    target_link_options(repiu_browser
+        PRIVATE
+            -sENVIRONMENT=worker
+            -sMODULARIZE=1
+            -sEXPORT_NAME=createRepiu
+            -sINVOKE_RUN=0
+            -sFORCE_FILESYSTEM=1
+            -lworkerfs.js
+            "-sEXPORTED_RUNTIME_METHODS=['FS','ENV','callMain']"
+            -sASYNCIFY=1
+            -sASYNCIFY_IGNORE_INDIRECT=1
+            # RunGuestOnThisThread is called once and binaryen inlines it into
+            # its caller, so the indirect call sits in RunExecutionThread (a
+            # pattern for the inlined name matches nothing and only warns).
+            "-sASYNCIFY_ADD=['repiu::engine::RunExecutionThread*']"
+            -sASYNCIFY_STACK_SIZE=1048576
+            # The add list matches function names, which a release link
+            # strips unless they are kept.
+            --profiling-funcs
+            "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/node_pre.js"
+    )
+    set_property(TARGET repiu_browser APPEND PROPERTY LINK_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/node_pre.js")
+    # The page that loads it, next to repiu_browser.{js,wasm}.
+    set(repiu_browser_page
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/index.html"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/main.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/worker.js"
+    )
+    add_custom_command(TARGET repiu_browser POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${repiu_browser_page}
+                $<TARGET_FILE_DIR:repiu_browser>
+        VERBATIM
+    )
 endif()
 
 if(WIN32)

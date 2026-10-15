@@ -4,6 +4,8 @@
 
 #include "repiu/engine/glide_host_window.h"
 
+#include "repiu/engine/gl_api.h"
+
 #include "repiu/platform/browser_host.h"
 
 namespace repiu::engine
@@ -35,6 +37,9 @@ public:
             *detail = "no WebGL2 context on the page's canvas";
             return false;
         }
+        // SDL has no video here, so GL functions are found through
+        // Emscripten instead.
+        SetGlProcAddressLoader(&repiu::platform::BrowserGlProcAddress);
         open_ = true;
         return true;
     }
@@ -44,6 +49,7 @@ public:
         if (open_)
         {
             repiu::platform::DestroyBrowserGlContext();
+            SetGlProcAddressLoader(nullptr);
             open_ = false;
         }
     }

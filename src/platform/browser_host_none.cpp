@@ -25,6 +25,11 @@ void DestroyBrowserGlContext()
 {
 }
 
+BrowserGlFunction BrowserGlProcAddress(const char* /*name*/)
+{
+    return nullptr;
+}
+
 bool YieldToHostEventLoop()
 {
     return false;

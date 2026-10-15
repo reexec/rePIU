@@ -87,12 +87,24 @@ public:
         return yields_;
     }
 
+    // Issue #72: how many times the thread went back to the browser page's
+    // event loop (none outside a browser).
+    [[nodiscard]] std::uint64_t page_yields() const
+    {
+        return page_yields_;
+    }
+
 private:
+    void YieldToPageIfDue(const ThreadContext& context);
+
     HostTurn* turn_;
     std::chrono::steady_clock::time_point next_turn_;
     std::optional<HostPollOutcome> outcome_;
     std::uint64_t turns_ = 0U;
     std::uint64_t yields_ = 0U;
+    std::chrono::steady_clock::time_point last_page_yield_;
+    std::uint64_t frames_at_page_yield_ = 0U;
+    std::uint64_t page_yields_ = 0U;
 };
 
 // Issue #64. Runs the guest on this thread through `entry` (the guest thread

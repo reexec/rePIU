@@ -75,14 +75,17 @@ Asyncify는 링크 단계의 변환이므로 Node 타깃과 네이티브는 영�
 | SDL | `src/engine/glide_host_window_sdl.cpp` | Win32·Linux(지금 코드를 옮김), Node(SDL dummy → 백엔드 dummy) |
 | 브라우저 캔버스 | `src/engine/glide_host_window_browser.cpp` → 플랫폼 함수 | 브라우저 Worker |
 
-어느 것을 쓸지는 실행 중에 정합니다. 플랫폼 헤더 `include/repiu/platform/browser_canvas.h`가 값만 주고받는 함수를 둡니다:
-`BrowserCanvasAvailable()`, `CreateBrowserGlContext(...)`, `BrowserCanvasSize(...)`, `DestroyBrowserGlContext()`. Win32·Linux는
+어느 것을 쓸지는 실행 중에 정합니다. 플랫폼 헤더 `include/repiu/platform/browser_host.h`가 값만 주고받는 함수를 둡니다:
+`BrowserCanvasAvailable()`, `CreateBrowserGlContext(...)`, `BrowserCanvasSize(...)`, `DestroyBrowserGlContext()`,
+`BrowserGlProcAddress(...)`(결정 6의 `YieldToHostEventLoop()`도 같은 헤더). Win32·Linux는
 "없음"을 돌려주고, 웹은 `Module.repiuCanvas`(worker.js가 넘긴 OffscreenCanvas)가 있으면 `getContext('webgl2', {alpha:false,
 depth:false, stencil:false, antialias:false})`로 문맥을 만들어 Emscripten GL에 등록합니다(`GL.registerContext`,
 `GL.makeContextCurrent`). 엔진에는 플랫폼 분기가 없고, Node에는 캔버스가 없으므로 지금처럼 SDL → dummy입니다.
 
 브라우저 구현의 성질:
 * 깊이·스텐실·안티에일리어싱 없음: 깊이는 #69의 FBO 쌍에 있음.
+* GL 함수는 Emscripten으로 찾습니다(`emscripten_webgl_get_proc_address`). SDL 비디오가 없어 `SDL_GL_GetProcAddress`가 답하지
+  않기 때문이며, `GlApi`가 쓰는 조회 함수를 창 구현이 정합니다(`SetGlProcAddressLoader`). 구현 중 처음 확인한 실패였습니다.
 * 스왑은 할 일이 없음: Worker가 양보할 때 OffscreenCanvas가 그 시점의 그림을 커밋합니다. #69 결정 6 덕분에 창 framebuffer에는
   완성된 그림만 있습니다.
 * 스왑 간격은 "적용됨"으로 답합니다. 그렇지 않으면 백엔드가 직접 박자를 맞추려 바쁜 대기를 하는데(Task 745), Worker에서는
@@ -92,7 +95,7 @@ depth:false, stencil:false, antialias:false})`로 문맥을 만들어 Emscripten
 
 ## 결정 6: 양보는 호스트 차례에서, 프레임마다
 
-`OneThreadHostLoop::TakeTurn`이 차례를 마친 뒤 플랫폼 함수 `YieldToHostEventLoop()`(`include/repiu/platform/host_event_loop.h`)를
+`OneThreadHostLoop::TakeTurn`이 차례를 마친 뒤 플랫폼 함수 `YieldToHostEventLoop()`(`include/repiu/platform/browser_host.h`)를
 부릅니다. 언제 부를지는 엔진이 정합니다: **마지막 양보 뒤 화면 교체가 있었거나, 16 ms가 지났을 때.** Win32·Linux 구현은 아무것도
 하지 않습니다. 웹 구현은 worker.js가 양보를 켰을 때만(`Module.repiuYield`) Asyncify로 한 번 비웁니다. 빈 시간은 `setTimeout(0)`이
 아니라 `MessageChannel` 한 번으로 둡니다. Worker의 `setTimeout`은 중첩되면 4 ms로 늘어나 16 ms마다 20 %를 잃기 때문입니다.
@@ -126,7 +129,8 @@ worker.js가 사용자가 고른 두 `File`을 WORKERFS로 `/roms`에 마운트�
 페이지는 `src/platform/web/page/`(`index.html`, `main.js`, `worker.js`)에 두고, 빌드 스크립트가 `repiu_browser.{js,wasm}` 옆에
 복사합니다. 단위 1은 로컬에서 엽니다: `python3 -m http.server`(COOP/COEP 불필요). 엔진의 표준 출력·오류는 페이지의 로그
 영역과 콘솔로 보냅니다. Worker에서도 SDL이 `window`를 찾지 않도록 #67의 `--pre-js`가 Node뿐 아니라 `window`가 없는 모든
-환경에서 SDL dummy 드라이버를 기본으로 합니다.
+환경에서 SDL 비디오를 dummy로, 오디오는 **없음**으로 합니다. SDL의 Emscripten dummy 오디오는 `setInterval` 콜백으로 도는데 Worker에서
+`function signature mismatch`로 멈췄습니다(구현 중 확인). 오디오 출력은 장치를 못 열면 무음으로 계속하므로 결과는 dummy와 같습니다.
 
 ## 바꾸지 않는 것
 
@@ -235,8 +239,9 @@ the title, the scale, fullscreen, the refresh rate) moves behind an engine inter
 | SDL | `src/engine/glide_host_window_sdl.cpp` | Win32 and Linux (today's code, moved), Node (SDL dummy → backend dummy) |
 | Browser canvas | `src/engine/glide_host_window_browser.cpp` → platform functions | the browser Worker |
 
-Which one is chosen at run time. A platform header, `include/repiu/platform/browser_canvas.h`, holds value-only functions:
-`BrowserCanvasAvailable()`, `CreateBrowserGlContext(...)`, `BrowserCanvasSize(...)`, `DestroyBrowserGlContext()`. Win32 and
+Which one is chosen at run time. A platform header, `include/repiu/platform/browser_host.h`, holds value-only functions:
+`BrowserCanvasAvailable()`, `CreateBrowserGlContext(...)`, `BrowserCanvasSize(...)`, `DestroyBrowserGlContext()`,
+`BrowserGlProcAddress(...)` (and decision 6's `YieldToHostEventLoop()`). Win32 and
 Linux answer "none"; the web, when `Module.repiuCanvas` (the OffscreenCanvas worker.js passed in) is there, makes a context
 with `getContext('webgl2', {alpha:false, depth:false, stencil:false, antialias:false})` and registers it with Emscripten's
 GL (`GL.registerContext`, `GL.makeContextCurrent`). The engine holds no platform branch, and Node, having no canvas, goes
@@ -244,6 +249,9 @@ SDL → dummy as today.
 
 The browser implementation:
 * No depth, stencil or antialiasing: depth lives in #69's FBO pair.
+* GL functions are found through Emscripten (`emscripten_webgl_get_proc_address`): with no SDL video,
+  `SDL_GL_GetProcAddress` does not answer, so the window implementation sets the lookup `GlApi` uses
+  (`SetGlProcAddressLoader`). This was the first failure found during implementation.
 * The swap has nothing to do: when the Worker yields, the OffscreenCanvas commits what is there, and thanks to #69's
   decision 6 the window's framebuffer only ever holds finished pictures.
 * The swap interval answers "applied". Otherwise the backend would pace swaps itself with a busy wait (Task 745); in a
@@ -255,7 +263,7 @@ The browser implementation:
 ## Decision 6: yield at the host turn, once a frame
 
 After `OneThreadHostLoop::TakeTurn` finishes a turn it calls a platform function, `YieldToHostEventLoop()`
-(`include/repiu/platform/host_event_loop.h`). The engine decides when: **when a picture was swapped since the last yield,
+(`include/repiu/platform/browser_host.h`). The engine decides when: **when a picture was swapped since the last yield,
 or 16 ms have passed.** Win32 and Linux do nothing. The web yields once through Asyncify, and only when worker.js turned
 yields on (`Module.repiuYield`). The yield is one `MessageChannel` round rather than `setTimeout(0)`: nested `setTimeout`
 in a Worker is clamped to 4 ms, which would lose 20 % every 16 ms.
@@ -290,7 +298,10 @@ never loaded whole. The loader's `build/runtime_mounts/` and the `eeprom.dat` an
 The page lives in `src/platform/web/page/` (`index.html`, `main.js`, `worker.js`), copied next to `repiu_browser.{js,wasm}`
 by the build script. Unit 1 is opened locally: `python3 -m http.server` (no COOP/COEP needed). The engine's standard output
 and error go to the page's log area and the console. So that SDL does not look for `window` in a Worker either, #67's
-`--pre-js` makes SDL's dummy drivers the default in every environment without `window`, not only Node.
+`--pre-js` makes SDL's video dummy and its audio **none** in every environment without `window`, not only Node. SDL's
+Emscripten dummy audio runs on a `setInterval` callback, which stopped in a Worker with `function signature mismatch`
+(found during implementation); an audio output that cannot open its device carries on silent, so the result is what the
+dummy gave.
 
 ## What does not change
 

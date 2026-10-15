@@ -1,17 +1,26 @@
-// Issue #67. Linked into the web loader with --pre-js. Under Node there is no
-// window and no audio device, and SDL3's Emscripten video driver assumes a
-// browser (it reads `window` while initialising), so Node runs SDL's dummy
-// drivers unless the environment already names others. The Glide backend then
-// falls back to its dummy and the audio outputs go silent, which is the
-// headless run of design #67, decision 5. In a browser this does nothing.
-if (typeof process === "object" && process.versions && process.versions.node) {
+// Issue #67. Linked into the web loaders with --pre-js. SDL3's Emscripten video
+// driver assumes a page's main thread (it reads `window` while initialising),
+// and its audio needs an AudioContext. Neither exists under Node (the headless
+// run of design #67, decision 5) or in a Worker (issue #72, where the page's
+// canvas is handed over through Module.repiuCanvas instead), so wherever there
+// is no `window`, SDL's dummy drivers are the default unless the environment
+// already names others. The Glide backend then draws to the page's canvas, or
+// falls back to its dummy under Node; the audio outputs go silent.
+if (typeof window === "undefined") {
   Module.preRun = Module.preRun || [];
   Module.preRun.push(function () {
-    if (!process.env.SDL_VIDEO_DRIVER) {
+    const named = (name) =>
+      typeof process === "object" && process.env && process.env[name];
+    if (!named("SDL_VIDEO_DRIVER")) {
       ENV.SDL_VIDEO_DRIVER = "dummy";
     }
-    if (!process.env.SDL_AUDIO_DRIVER) {
-      ENV.SDL_AUDIO_DRIVER = "dummy";
+    // Issue #72: no SDL audio at all. SDL's Emscripten dummy audio drives
+    // itself with setInterval, whose callback failed in a Worker with a
+    // function signature mismatch; with no driver the audio outputs report
+    // that they could not open and stay silent, which is what the dummy gave.
+    // The page's sound (an AudioWorklet) is unit 2.
+    if (!named("SDL_AUDIO_DRIVER")) {
+      ENV.SDL_AUDIO_DRIVER = "none";
     }
   });
 }

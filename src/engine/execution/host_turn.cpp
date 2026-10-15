@@ -6,6 +6,7 @@
 #include "repiu/runtime/execution_model.h"
 #include "repiu/runtime/execution_timeout.h"
 
+#include "repiu/platform/browser_host.h"
 #include "repiu/platform/host_error_stream.h"
 #include "repiu/platform/host_telemetry.h"
 #include "repiu/platform/host_time.h"
@@ -720,8 +721,32 @@ HostPollOutcome PollThreadUntilExit(const repiu::platform::HostThread& thread,
 }
 
 OneThreadHostLoop::OneThreadHostLoop(HostTurn* const turn)
-    : turn_(turn), next_turn_(std::chrono::steady_clock::now())
+    : turn_(turn),
+      next_turn_(std::chrono::steady_clock::now()),
+      last_page_yield_(next_turn_)
 {
+}
+
+// Issue #72 (design decision 6): in a browser the page shows the canvas and
+// handles messages only when the thread comes back to its event loop. Once a
+// picture was swapped, or 16 ms after the last yield so the page never
+// stalls, the thread goes back for one round. Elsewhere the platform does
+// nothing and this only costs a clock read per turn.
+void OneThreadHostLoop::YieldToPageIfDue(const ThreadContext& context)
+{
+    constexpr auto kPageYieldGap = std::chrono::milliseconds(16);
+    const std::uint64_t frames = context.glide_backend.presented_frame_total();
+    const auto now = std::chrono::steady_clock::now();
+    if (frames == frames_at_page_yield_ && now - last_page_yield_ < kPageYieldGap)
+    {
+        return;
+    }
+    frames_at_page_yield_ = frames;
+    last_page_yield_ = now;
+    if (repiu::platform::YieldToHostEventLoop())
+    {
+        ++page_yields_;
+    }
 }
 
 bool OneThreadHostLoop::TurnDue(const ThreadContext& context) const
@@ -748,6 +773,7 @@ bool OneThreadHostLoop::TakeTurn(ThreadContext* const context)
     {
         return false;
     }
+    YieldToPageIfDue(*context);
     // The next turn comes with the next tick, or at the cap if that is later.
     const std::chrono::nanoseconds until_tick(
         static_cast<std::chrono::nanoseconds::rep>(std::min<std::uint64_t>(
@@ -778,9 +804,11 @@ HostPollOutcome RunGuestOnThisThread(const repiu::platform::HostThreadEntry entr
     const std::uint32_t code = entry(context);
     context->one_thread_host = nullptr;
     std::fprintf(stderr,
-                 "[repiu-host-loop] one thread: turns=%llu yields=%llu end=%s\n",
+                 "[repiu-host-loop] one thread: turns=%llu yields=%llu "
+                 "page-yields=%llu end=%s\n",
                  static_cast<unsigned long long>(loop.turns()),
                  static_cast<unsigned long long>(loop.yields()),
+                 static_cast<unsigned long long>(loop.page_yields()),
                  loop.outcome().has_value() ? "host" : "guest");
     if (loop.outcome().has_value())
     {

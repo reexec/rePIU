@@ -80,6 +80,13 @@ struct GlApi
 // function that is missing.
 bool LoadGlApi(GlApi* api, std::string* missing_function);
 
+// Issue #72: how GL functions are found by name. SDL's loader unless the
+// window that made the current context says otherwise -- a browser Worker has
+// no SDL video, and Emscripten answers there instead. Null restores SDL's.
+using GlFunction = void (*)();
+using GlProcAddressLoader = GlFunction (*)(const char* name);
+void SetGlProcAddressLoader(GlProcAddressLoader loader);
+
 // The GL state the passes outside the Glide pipeline (the LFB blit, the
 // present and the post-process pass) change, captured with queries both
 // desktop core and ES answer, so each pass can put back exactly what it found.

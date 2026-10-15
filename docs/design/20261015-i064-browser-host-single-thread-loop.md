@@ -190,6 +190,8 @@ sequenceDiagram
 ## 검증
 
 1. Win32 `direct` Debug·Release: 빌드, core probe 44/44, pumpitea(`dynamic`) 타이틀·데모 플레이. 회귀 없음.
+   호스트 차례와 오디오 `Pump()`는 Linux도 쓰는 공용 코드이므로, WSL에서 Linux i386·x64 빌드와 core probe도
+   확인합니다(2026-10-15, 사용자 확인: 단일 스레드는 `emulated`에만, Windows·Linux의 평소 빌드는 그대로).
 2. Win32 `emulated` Release: 빌드, core probe, pumpitea 타이틀·데모 플레이. 게스트 실행 중 프로세스가 만든 스레드가
    메인 하나뿐임을 최종 보고의 한 줄(가칭 `host loop: one thread`)과 스레드 수로 확인.
 3. HLE 경계 trace: 단계 1 전후의 `emulated` trace가 첫 벽시계 의존(INT 21h AH=2Ch)까지 같은지.
@@ -391,6 +393,9 @@ further slice. The exit report and exit code stay as on `emulated` today. Closin
 ## Verification
 
 1. Win32 `direct` Debug and Release: build, core probe 44/44, pumpitea (`dynamic`) title and demo play, no regression.
+   The host turn and the audio `Pump()` are shared code Linux uses too, so the Linux i386 and x64 builds and core
+   probes are checked under WSL as well (2026-10-15, confirmed by the user: one thread on `emulated` only; the usual
+   Windows and Linux builds keep their threads).
 2. Win32 `emulated` Release: build, core probe, pumpitea title and demo play; while the guest runs, the process has
    created only the main thread, checked by a final-report line (working name `host loop: one thread`) and the thread
    count.

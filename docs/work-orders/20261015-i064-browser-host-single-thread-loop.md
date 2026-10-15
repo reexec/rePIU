@@ -36,7 +36,7 @@
 * Windows `emulated` Release가 단일 스레드 루프로 pumpitea 타이틀·데모 플레이까지 나오고, 소리·입력·종료가 동작한다.
 * 게스트 실행 중 프로세스가 만든 스레드가 메인 하나뿐이다.
 * 단계 1 전후 `emulated`의 HLE 경계 trace가 첫 벽시계 의존까지 같다.
-* `direct` 빌드는 회귀가 없다(core probe 44/44, pumpitea `dynamic`).
+* `direct` 빌드는 회귀가 없다(core probe 44/44, pumpitea `dynamic`). WSL의 Linux i386·x64 빌드와 core probe도 통과한다.
 
 ---
 
@@ -81,4 +81,5 @@ Branch: `web-browser-host`. Build trees: `build/` (`direct`), `build/win32_x86_e
   and exit working.
 * While the guest runs, the process has created only the main thread.
 * `emulated`'s HLE boundary trace before and after phase 1 agrees up to the first wall-clock dependence.
-* The `direct` build does not regress (core probe 44/44, pumpitea `dynamic`).
+* The `direct` build does not regress (core probe 44/44, pumpitea `dynamic`); the Linux i386 and x64 builds and core
+  probes under WSL pass too.

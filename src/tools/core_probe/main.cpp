@@ -201,7 +201,11 @@ constexpr CoreProbe kCoreProbes[] = {
 #endif
     {"launcher", &repiu::tools::RunLauncherProbe},
     // Issue #48: the update path, without a network.
+#if !defined(__EMSCRIPTEN__)
+    // Issue #67: the updater downloads releases on a thread and replaces the
+    // installed files, and the web has neither.
     {"launcher_update", &repiu::tools::RunLauncherUpdateProbe},
+#endif
     // Task 730. Here as well as in the Win32 AOT probe because the case it
     // exists for -- a host address aliasing guest code in its low half --
     // needs a pointer wider than 32 bits, which only the x64 hosts have.
@@ -235,7 +239,7 @@ constexpr const char* kSkippedProbes[] = {
 #if defined(__EMSCRIPTEN__)
     "guest_cpu_context", "virtual_memory", "fault_handler",
     "fault_recovery_provenance", "stack_bridge",
-    "guest_stack_switch", "host_thread",
+    "guest_stack_switch", "host_thread", "launcher_update",
 #elif defined(REPIU_NO_I386_PROBES)
     "stack_bridge", "guest_stack_switch",
 #endif
@@ -307,8 +311,8 @@ int main()
         std::cout << ' ' << name;
     }
 #if defined(__EMSCRIPTEN__)
-    std::cout << "\ncore_probe_host=wasm32 (Task 513 Stage 1: the execution "
-                 "engine is not built here)\n";
+    std::cout << "\ncore_probe_host=wasm32 (issue #67: the engine on the "
+                 "emulated model; the native-execution probes are not built)\n";
 #elif defined(REPIU_NO_I386_PROBES)
     std::cout << "\ncore_probe_host=x64 (Task 545: i386 assembly probes are "
                  "not built)\n";

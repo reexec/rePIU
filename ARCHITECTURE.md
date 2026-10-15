@@ -4875,11 +4875,11 @@ chose no driver).
 * **CPU 아키텍처에 따른 차이는 실행 모델**입니다. `direct`는 게스트의 바이트를 이 프로세스에서 그대로
   실행하고(Win32, Linux i386), `cache`는 번역한 long mode 코드 캐시를 실행하며(Linux x64), `emulated`는
   rex86 CPU 코어가 게스트를 실행하고(issue #61: 웹과 ARM 호스트용, Win32에서
-  `-DREPIU_EXECUTION_MODEL_OVERRIDE=emulated`로 개발용 빌드), `none`은 게스트를 실행하지 않습니다(지금의 웹
-  빌드). 공용 코드는 `include/repiu/runtime/execution_model.h`의 함수
+  `-DREPIU_EXECUTION_MODEL_OVERRIDE=emulated`로 개발용 빌드), 웹 빌드도 `emulated`입니다(issue #67, 그 전까지는
+  게스트를 실행하지 않는 `none`). 공용 코드는 `include/repiu/runtime/execution_model.h`의 함수
   (`RunsGuestBytesDirectly`, `RunsLongModeCodeCache`, `RunsGuestOnEmulatedCpu`, `RunsHostOnOneThread`,
   `LongModeReturnThunkAddress`,
-  `InjectsTicksDuringSwapWait`)로 묻고, 구현은 `src/runtime/execution_model_{direct,cache,emulated,none}.cpp`입니다.
+  `InjectsTicksDuringSwapWait`)로 묻고, 구현은 `src/runtime/execution_model_{direct,cache,emulated}.cpp`입니다.
   CMake의 `REPIU_EXECUTION_MODEL`이 고릅니다.
 * **모델에 따라 다르고 엔진의 타입이 필요한 코드**는 공용 파일 옆에 `<이름>_direct.cpp`,
   `<이름>_cache.cpp`, `<이름>_emulated.cpp`로 있습니다.
@@ -4941,11 +4941,11 @@ differs by host goes to one of two places.
 * **The difference by CPU architecture is the execution model.** `direct` runs the guest's bytes in this
   process as they are (Win32, Linux i386), `cache` runs the translated long-mode code cache (Linux x64),
   `emulated` has the rex86 CPU core run the guest (issue #61: for the web and ARM hosts, built on Win32
-  for development with `-DREPIU_EXECUTION_MODEL_OVERRIDE=emulated`), and `none` runs no guest (today's
-  web build). Shared code asks through the functions of `include/repiu/runtime/execution_model.h`
+  for development with `-DREPIU_EXECUTION_MODEL_OVERRIDE=emulated`), and the web build is `emulated` too
+  (issue #67; until then it was `none`, which ran no guest). Shared code asks through the functions of `include/repiu/runtime/execution_model.h`
   (`RunsGuestBytesDirectly`, `RunsLongModeCodeCache`, `RunsGuestOnEmulatedCpu`,
   `RunsHostOnOneThread`, `LongModeReturnThunkAddress`, `InjectsTicksDuringSwapWait`), implemented in
-  `src/runtime/execution_model_{direct,cache,emulated,none}.cpp`. CMake's `REPIU_EXECUTION_MODEL` picks.
+  `src/runtime/execution_model_{direct,cache,emulated}.cpp`. CMake's `REPIU_EXECUTION_MODEL` picks.
 * **Code that differs by model and needs the engine's types** sits next to its shared file as
   `<name>_direct.cpp`, `<name>_cache.cpp` and `<name>_emulated.cpp`.
 

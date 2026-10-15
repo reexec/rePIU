@@ -30,8 +30,14 @@
 #include <SDL3/SDL_opengl.h>
 
 // Task 419: the pause hint for the rendezvous spin. Task 758: <immintrin.h>
-// declares it on MSVC and GCC alike, for every host the engine builds for.
+// declares it on MSVC and GCC alike. Issue #67: x86 hosts only; elsewhere
+// (the web) the hint is empty, and on one thread the spin is never reached.
+#if defined(_M_IX86) || defined(_M_X64) || defined(__i386__) || defined(__x86_64__)
 #include <immintrin.h>
+#define REPIU_SPIN_PAUSE() _mm_pause()
+#else
+#define REPIU_SPIN_PAUSE() ((void)0)
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -398,7 +404,7 @@ bool GlideOpenGlBackend::SpinForRendezvousHint(const std::atomic<bool> &hint,
         }
         return true;
       }
-      _mm_pause();
+      REPIU_SPIN_PAUSE();
     }
     if (std::chrono::steady_clock::now() >= deadline) {
       break;

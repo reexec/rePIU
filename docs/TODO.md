@@ -41,8 +41,9 @@ Task 492~495의 JAMMA 입력 timing, IRQ0 replay, 2P 숫자패드 별칭과 hist
   타이틀·소리는 사용자 확인이 남아 있습니다.
   **단계 2 — issue #67:** 엔진과 rex86이 wasm32로 빌드되어 Node에서 pumpitea가 돕니다(약 6.1 MIPS, 경계 trace가
   네이티브와 첫 벽시계 의존까지 같음, [설계](design/20261015-i067-emscripten-headless.md)).
-  **다음:** 단계 3(GLES 3 / WebGL2 렌더러), 단계 4(페이지), 그리고 대기 루프를 뺀 장면별 처리량 측정과 rex86 번역 범위
-  확대(x87, REP 문자열).
+  **단계 3 — issue #69:** Glide 렌더러가 GL 3.3 core / ES 3.0 부분집합으로 옮겨졌습니다(offscreen front/back FBO,
+  네이티브 장면 probe 화소 일치, [설계](design/20261016-i069-gles3-renderer.md)).
+  **다음:** 단계 4(페이지), 그리고 대기 루프를 뺀 장면별 처리량 측정과 rex86 번역 범위 확대(x87, REP 문자열).
 
 - **환경 변수 토글 정리 — 1~3번 묶음, 일회성 진단(#25), guarded segment(#30) 완료(2026-10-09).** 조사 결과와 전체
   목록은 [환경 변수 토글 목록](analysis/environment-toggle-inventory.md)이 정본입니다.
@@ -115,9 +116,10 @@ units in [`work-orders/`](work-orders/), and completed results and verification 
   ([design](design/20261015-i064-browser-host-single-thread-loop.md)); the title and the sound are left for the user to
   confirm. **Phase 2 -- issue #67:** the engine and rex86 build for wasm32 and pumpitea runs under Node (about 6.1 MIPS,
   the boundary trace matching native up to the first wall-clock dependence,
-  [design](design/20261015-i067-emscripten-headless.md)). **Next:** phase 3 (the GLES 3 / WebGL2 renderer), phase 4
-  (the page), per-scene throughput measured with the wait loops taken out, and wider rex86 translation (the x87, REP
-  strings).
+  [design](design/20261015-i067-emscripten-headless.md)). **Phase 3 -- issue #69:** the Glide renderer moved to the
+  GL 3.3 core / ES 3.0 subset (offscreen front/back FBOs, the native scene probe matching pixel for pixel,
+  [design](design/20261016-i069-gles3-renderer.md)). **Next:** phase 4 (the page), per-scene throughput measured with the
+  wait loops taken out, and wider rex86 translation (the x87, REP strings).
 
 - **Environment toggle cleanup -- groups 1 to 3, the one-off diagnostics (#25) and the guarded segment switches (#30) done (2026-10-09).** The
   survey and full list live in the [environment toggle inventory](analysis/environment-toggle-inventory.md).

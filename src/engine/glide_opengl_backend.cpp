@@ -927,11 +927,11 @@ void GlideOpenGlBackend::ApplyDrawableViewport() {
              static_cast<GLsizei>(content_rect_.height));
   glScissor(0, 0, static_cast<GLsizei>(content_rect_.width),
             static_cast<GLsizei>(content_rect_.height));
-  GLfloat point_size_range[2] = {1.0F, 1.0F};
-  glGetFloatv(GL_ALIASED_POINT_SIZE_RANGE, point_size_range);
-  const float supported_minimum = std::max(1.0F, point_size_range[0]);
+  // Issue #69: the range is the context's, read once when it was made; this
+  // runs at every grClipWindow, and a query there is a round trip in WebGL.
+  const float supported_minimum = std::max(1.0F, point_size_range_[0]);
   const float supported_maximum =
-      std::max(supported_minimum, point_size_range[1]);
+      std::max(supported_minimum, point_size_range_[1]);
   const float requested_size = CalculateGlidePointSize(
       logical_width_, logical_height_, content_rect_.width,
       content_rect_.height);
@@ -1460,6 +1460,7 @@ bool GlideOpenGlBackend::OpenWindowed(std::uint32_t logical_width,
     // ES always does.
     glEnable(GL_PROGRAM_POINT_SIZE);
   }
+  glGetFloatv(GL_ALIASED_POINT_SIZE_RANGE, point_size_range_);
   ApplyDrawableViewport();
   if (!framebuffers_.ready()) {
     fprintf(stderr,
@@ -3475,6 +3476,8 @@ void GlideOpenGlBackend::Close() {
   lfb_texture_ = 0;
   gl_ = GlApi{};
   game_gl_state_ = GameGlState{};
+  point_size_range_[0] = 1.0F;
+  point_size_range_[1] = 1.0F;
   stream_vertices_.clear();
   front_render_buffer_selects_ = 0U;
 }

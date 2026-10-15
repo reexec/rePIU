@@ -559,6 +559,7 @@ private:
     std::uint32_t logical_height_ = 0;
     std::uint32_t window_scale_ = 2U;
     float point_size_ = 1.0F;
+    float point_size_range_[2] = {1.0F, 1.0F};
     // Task 769: where the picture sits in the drawable, recomputed by
     // ApplyDrawableViewport. Host thread only.
     GlideLetterboxRect content_rect_{};

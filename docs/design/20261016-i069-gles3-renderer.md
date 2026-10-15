@@ -119,17 +119,21 @@ WebGL에서는 게임이 기본 프레임버퍼에 손대지 않으므로, 슬�
 |---|---|---|
 | Glide 결합 | `#version 110`, `ftransform`, `gl_Color`, `gl_MultiTexCoord0` | 속성 3개(`repiuPosition`, `repiuColor`, `repiuTexCoord`), `in`/`out`, `texture()`, 출력 `repiuFragColor`. 몸통의 결합·안개 식은 그대로 |
 | 블릿·표시(새) | 결합 셰이더의 `repiuBlitMode` | 결합 셰이더의 블릿 모드는 LFB 블릿에 남기고, 표시는 후처리와 같은 "그대로" 프로그램 |
-| 후처리(내장·사용자) | 버전 없는 GLSL 110(`attribute`/`varying`/`texture2D`/`gl_FragColor`) | 엔진이 머리말과 **호환 매크로**를 앞에 붙임: `attribute`→`in`, `varying`→`out`/`in`, `texture2D`→`texture`, `gl_FragColor`→출력 변수. 파일의 `#version` 줄은 엔진 머리말로 바꿉니다(RetroArch GLSL 셰이더가 흔히 쓰는 방식) |
+| 후처리(내장·사용자) | 버전 없는 GLSL 110(`attribute`/`varying`/`texture2D`/`gl_FragColor`) | 엔진이 머리말을 붙이고 **단어 단위로 치환**(구현에서 매크로 대신. `gl_` 예약 이름을 매크로로 정의하지 않기 위해): `attribute`→`in`, `varying`→`out`/`in`, `texture2D`→`texture`, `gl_FragColor`→출력 변수. 파일의 `#version` 줄은 엔진 머리말로 바꿉니다(RetroArch GLSL 셰이더가 흔히 쓰는 방식) |
 | OSD | `"#version 130"` | 같은 머리말 문자열 |
 
-머리말과 매크로는 `src/engine/gl_shader_dialect.{h,cpp}` 한 곳에서 만듭니다. 내장 crt·scanline은 이미 `#ifdef GL_ES`
-정밀도 줄을 가지고 있어 매크로만으로 컴파일될 것으로 봅니다(확인 필요).
+머리말과 치환은 `src/engine/gl_shader_dialect.{h,cpp}` 한 곳에서 합니다. 내장 crt·scanline은 치환만으로 3.30 core에서
+컴파일됩니다(확인됨, render probe).
 
 ## 결정 8: 상태 저장·복원은 백엔드가 지닌 값으로
 
 `glPushAttrib`/`glGetIntegerv`로 되읽던 상태(깊이·블렌드·컬·시저 켜짐, 색 마스크, 그리기 대상, 알파 테스트)를 LFB 블릿과
 표시 경로가 명시적으로 저장·복원합니다. 표시는 기본 프레임버퍼에서 일어나고 게임 상태는 FBO 쪽이라, 표시 경로는 바꾼 것
 (프로그램, 뷰포트, 시저, 블렌드·깊이, 묶은 FBO와 텍스처)을 끝에 되돌리기만 하면 됩니다.
+
+GL에 되묻는 스냅샷(`glGet*`)은 쓰지 않습니다. 구현 중 첫 판은 매 프레임 스냅샷을 떴는데, 스레드 드라이버(NVIDIA)에서
+조회가 드라이버 스레드를 기다리게 해 vsync OFF 처리량이 절반으로 떨어졌습니다(작업 로그). WebGL에서도 조회는 왕복
+비용입니다. 그래서 게임 상태(깊이·블렌드·컬·시저 켜짐, 색 마스크)는 setter가 기록하고 되돌릴 때 그 값을 씁니다.
 
 ## 파일 배치
 
@@ -139,6 +143,7 @@ WebGL에서는 게임이 기본 프레임버퍼에 손대지 않으므로, 슬�
 | `src/engine/gl_shader_dialect.{h,cpp}` (새) | GLSL 머리말과 110 호환 매크로 |
 | `src/engine/glide_vertex_stream.{h,cpp}` (새) | 스트리밍 VBO·VAO, 꼭짓점 배치 |
 | `src/engine/glide_framebuffer_pair.{h,cpp}` (새) | FBO 쌍, 공용 깊이, 교환, 읽기, 표시 사각형 |
+| `src/engine/gl_unit_quad.{h,cpp}` (새) | 표시·후처리의 단위 사각형, 공용 attribute slot으로 program 만들기 |
 | `glide_opengl_backend.cpp` | 위를 부르는 오케스트레이션. 고정 기능 호출 제거 |
 | `glide_opengl_shader.cpp`, `glide_post_process.cpp` | 방언 적용, 공용 함수 표 사용 |
 | `glide_osd.cpp` | 머리말 문자열 |
@@ -306,12 +311,11 @@ frame. Phase 4 then needs no `preserveDrawingBuffer`.
 |---|---|---|
 | Glide combine | `#version 110`, `ftransform`, `gl_Color`, `gl_MultiTexCoord0` | three attributes (`repiuPosition`, `repiuColor`, `repiuTexCoord`), `in`/`out`, `texture()`, output `repiuFragColor`; the combine and fog expressions unchanged |
 | Blit and present (new) | the combine shader's `repiuBlitMode` | blit mode stays in the combine shader for the LFB blit; presentation uses the same pass-through program as post-process |
-| Post-process (built-in and user) | unversioned GLSL 110 (`attribute`/`varying`/`texture2D`/`gl_FragColor`) | the engine prepends the header and **compatibility macros**: `attribute`→`in`, `varying`→`out`/`in`, `texture2D`→`texture`, `gl_FragColor`→an output variable. A file's `#version` line is replaced by the engine's header (a common way with RetroArch GLSL shaders) |
+| Post-process (built-in and user) | unversioned GLSL 110 (`attribute`/`varying`/`texture2D`/`gl_FragColor`) | the engine prepends the header and **replaces whole words** (in the implementation, instead of macros, so as not to define reserved `gl_` names): `attribute`→`in`, `varying`→`out`/`in`, `texture2D`→`texture`, `gl_FragColor`→an output variable. A file's `#version` line is replaced by the engine's header (a common way with RetroArch GLSL shaders) |
 | OSD | `"#version 130"` | the same header string |
 
-The header and macros are built in one place, `src/engine/gl_shader_dialect.{h,cpp}`. The built-in crt and scanline
-shaders already carry a `#ifdef GL_ES` precision line and are expected to compile with the macros alone (to be
-confirmed).
+The header and the substitution live in one place, `src/engine/gl_shader_dialect.{h,cpp}`. The built-in crt and
+scanline shaders compile on 3.30 core with the substitution alone (confirmed, render probe).
 
 ## Decision 8: save and restore from values the backend holds
 
@@ -319,6 +323,11 @@ State read back today through `glPushAttrib`/`glGetIntegerv` (depth, blend, cull
 the draw target, alpha test) is saved and restored explicitly by the LFB blit and the present path. Presentation happens
 on the default framebuffer while the game's state lives with the FBOs, so the present path only puts back what it changed
 (program, viewport, scissor, blend and depth, the bound FBO and texture).
+
+No snapshot that queries GL (`glGet*`) is used. The first cut during implementation took one every frame, and on a
+threaded driver (NVIDIA) the queries made the driver thread catch up, halving vsync-OFF throughput (work log). In WebGL a
+query is a round trip as well. So the game's state (the depth, blend, cull and scissor enables, the color mask) is
+recorded by the setters, and those values are what is put back.
 
 ## Files
 
@@ -328,6 +337,7 @@ on the default framebuffer while the game's state lives with the FBOs, so the pr
 | `src/engine/gl_shader_dialect.{h,cpp}` (new) | the GLSL header and the 110 compatibility macros |
 | `src/engine/glide_vertex_stream.{h,cpp}` (new) | the streaming VBO and VAO, vertex layout |
 | `src/engine/glide_framebuffer_pair.{h,cpp}` (new) | the FBO pair, shared depth, exchange, readback, the present quad |
+| `src/engine/gl_unit_quad.{h,cpp}` (new) | the unit quad of the present and post-process passes, programs built on the shared attribute slots |
 | `glide_opengl_backend.cpp` | orchestration calling the above; fixed-function calls removed |
 | `glide_opengl_shader.cpp`, `glide_post_process.cpp` | the dialect applied, the shared function table used |
 | `glide_osd.cpp` | the header string |

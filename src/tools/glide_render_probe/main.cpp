@@ -5,6 +5,8 @@
 #include "repiu/engine/glide_letterbox.h"
 #include "repiu/engine/glide_opengl_backend.h"
 #include "repiu/engine/glide_post_process.h"
+#include "repiu/hle/glide_hle.h"
+#include "repiu/hle/glide_texture_decode.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_opengl.h>
@@ -15,6 +17,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdint>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -281,6 +284,435 @@ bool RunOpenGlPostShaderProbe()
         Check(letterbox_ok, "letterbox viewport or readback was wrong") &&
         Check(fullscreen_ok, "fullscreen toggle did not round-trip");
 }
+
+// Issue #69: a fixed scene drawn through the backend's Glide API only, so the
+// same code draws it before and after the renderer moved off fixed-function
+// OpenGL. The picture read back is written to a file and, given a reference,
+// compared pixel by pixel. It touches every path the port rewrites: the
+// combine functions, textures with repeat, clamp, perspective and filtering,
+// the alpha test at its boundary, blending, depth, table fog, the constant
+// color, points, lines, polygons, batches, culling, the color mask and the
+// LFB blit in both orientations.
+using repiu::hle::GlideDrawVertex;
+
+GlideDrawVertex SceneVertex(float x, float y, std::uint32_t rgba)
+{
+    GlideDrawVertex vertex;
+    vertex.x = x;
+    vertex.y = y;
+    vertex.r = static_cast<float>((rgba >> 24U) & 0xFFU) / 255.0F;
+    vertex.g = static_cast<float>((rgba >> 16U) & 0xFFU) / 255.0F;
+    vertex.b = static_cast<float>((rgba >> 8U) & 0xFFU) / 255.0F;
+    vertex.a = static_cast<float>(rgba & 0xFFU) / 255.0F;
+    return vertex;
+}
+
+GlideDrawVertex SceneTexturedVertex(float x, float y, float s, float t,
+                                    float oow)
+{
+    GlideDrawVertex vertex = SceneVertex(x, y, 0xFFFFFFFFU);
+    vertex.s = s * oow;
+    vertex.t = t * oow;
+    vertex.texture_oow = oow;
+    vertex.fog_oow = oow;
+    return vertex;
+}
+
+repiu::hle::GlideAlphaCombineState SceneCombine(std::uint32_t function,
+                                                std::uint32_t factor,
+                                                std::uint32_t local,
+                                                std::uint32_t other,
+                                                bool invert = false)
+{
+    repiu::hle::GlideAlphaCombineState state;
+    state.function = function;
+    state.factor = factor;
+    state.local = local;
+    state.other = other;
+    state.invert = invert;
+    state.valid = true;
+    return state;
+}
+
+repiu::hle::GlideAlphaBlendState SceneBlend(std::uint32_t source,
+                                            std::uint32_t destination)
+{
+    repiu::hle::GlideAlphaBlendState state;
+    state.rgb_source = source;
+    state.rgb_destination = destination;
+    state.alpha_source = 4U;
+    state.alpha_destination = 0U;
+    state.valid = true;
+    return state;
+}
+
+bool DrawSceneQuad(repiu::engine::GlideOpenGlBackend& backend,
+                   const GlideDrawVertex& top_left,
+                   const GlideDrawVertex& top_right,
+                   const GlideDrawVertex& bottom_right,
+                   const GlideDrawVertex& bottom_left)
+{
+    return backend.DrawTriangle(top_left, top_right, bottom_right) &&
+        backend.DrawTriangle(top_left, bottom_right, bottom_left);
+}
+
+// The combine, texture, alpha, blend, depth and fog parts of the scene.
+bool DrawSceneGeometry(repiu::engine::GlideOpenGlBackend& backend)
+{
+    using repiu::engine::GlideBatchPrimitive;
+    const auto iterated = SceneCombine(1U, 0U, 0U, 0U);
+    bool ok = backend.SetDepthBufferMode(0U) &&
+        backend.SetAlphaBlend(SceneBlend(4U, 0U)) &&
+        backend.SetColorCombine(iterated) && backend.SetAlphaCombine(iterated) &&
+        backend.SetAlphaTestFunction(7U) &&
+        backend.BufferClear(0x00203040U, 0xFFU, 0xFFFFU);
+
+    // Gouraud triangle.
+    ok = ok &&
+        backend.DrawTriangle(SceneVertex(4.0F, 4.0F, 0xFF0000FFU),
+                             SceneVertex(60.0F, 8.0F, 0x00FF00FFU),
+                             SceneVertex(20.0F, 50.0F, 0x0000FFFFU));
+
+    // An 8x8 RGB565 checker, repeated twice, nearest, then a perspective
+    // quad, then linear filtering with clamping past the edges.
+    std::vector<std::uint8_t> checker(8U * 8U * 2U);
+    for (std::uint32_t y = 0U; y < 8U; ++y)
+    {
+        for (std::uint32_t x = 0U; x < 8U; ++x)
+        {
+            const std::uint16_t texel = ((x + y) & 1U) != 0U
+                ? static_cast<std::uint16_t>(0xFFE0U)
+                : static_cast<std::uint16_t>(0x001FU | (x << 6U));
+            checker[(y * 8U + x) * 2U] = static_cast<std::uint8_t>(texel);
+            checker[(y * 8U + x) * 2U + 1U] =
+                static_cast<std::uint8_t>(texel >> 8U);
+        }
+    }
+    repiu::hle::GlideTextureDimensions dimensions;
+    ok = ok &&
+        Check(repiu::hle::CalculateGlideTextureDimensions(5U, 3U,
+                                                         &dimensions) &&
+                  dimensions.width == 8U && dimensions.height == 8U,
+              "scene texture is not 8x8") &&
+        backend.StoreTexture(0x1000U, 10U, 5U, 3U, checker.data(),
+                             checker.size(), nullptr, nullptr) &&
+        backend.SourceTexture(0x1000U);
+    backend.SetTextureClampMode(0U, 0U);
+    backend.SetTextureFilterMode(0U, 0U);
+    backend.SetTextureCombineEnabled(true);
+    ok = ok && backend.SetColorCombine(SceneCombine(3U, 8U, 0U, 1U)) &&
+        DrawSceneQuad(backend, SceneTexturedVertex(64.0F, 4.0F, 0.0F, 0.0F, 1.0F),
+                      SceneTexturedVertex(104.0F, 4.0F, 512.0F, 0.0F, 1.0F),
+                      SceneTexturedVertex(104.0F, 44.0F, 512.0F, 512.0F, 1.0F),
+                      SceneTexturedVertex(64.0F, 44.0F, 0.0F, 512.0F, 1.0F)) &&
+        DrawSceneQuad(backend,
+                      SceneTexturedVertex(108.0F, 4.0F, 0.0F, 0.0F, 1.0F),
+                      SceneTexturedVertex(156.0F, 4.0F, 256.0F, 0.0F, 0.25F),
+                      SceneTexturedVertex(156.0F, 44.0F, 256.0F, 256.0F, 0.25F),
+                      SceneTexturedVertex(108.0F, 44.0F, 0.0F, 256.0F, 1.0F));
+    backend.SetTextureClampMode(1U, 1U);
+    backend.SetTextureFilterMode(1U, 1U);
+    ok = ok &&
+        DrawSceneQuad(backend,
+                      SceneTexturedVertex(4.0F, 54.0F, -128.0F, -128.0F, 1.0F),
+                      SceneTexturedVertex(44.0F, 54.0F, 384.0F, -128.0F, 1.0F),
+                      SceneTexturedVertex(44.0F, 94.0F, 384.0F, 384.0F, 1.0F),
+                      SceneTexturedVertex(4.0F, 94.0F, -128.0F, 384.0F, 1.0F));
+
+    // A 16x16 ARGB4444 texture whose alpha nibble is the column: GREATER
+    // against 0x88 keeps columns 9..15 and drops column 8, the boundary.
+    std::vector<std::uint8_t> ramp(16U * 16U * 2U);
+    for (std::uint32_t y = 0U; y < 16U; ++y)
+    {
+        for (std::uint32_t x = 0U; x < 16U; ++x)
+        {
+            const std::uint16_t texel =
+                static_cast<std::uint16_t>((x << 12U) | 0x0F80U | (y & 0xFU));
+            ramp[(y * 16U + x) * 2U] = static_cast<std::uint8_t>(texel);
+            ramp[(y * 16U + x) * 2U + 1U] =
+                static_cast<std::uint8_t>(texel >> 8U);
+        }
+    }
+    backend.SetTextureClampMode(1U, 1U);
+    backend.SetTextureFilterMode(0U, 0U);
+    ok = ok &&
+        backend.StoreTexture(0x2000U, 12U, 4U, 3U, ramp.data(), ramp.size(),
+                             nullptr, nullptr) &&
+        backend.SourceTexture(0x2000U) &&
+        backend.SetAlphaCombine(SceneCombine(2U, 0U, 0U, 1U)) &&
+        backend.SetAlphaTestReferenceValue(0x88U) &&
+        backend.SetAlphaTestFunction(4U) &&
+        DrawSceneQuad(backend,
+                      SceneTexturedVertex(48.0F, 54.0F, 0.0F, 0.0F, 1.0F),
+                      SceneTexturedVertex(96.0F, 54.0F, 256.0F, 0.0F, 1.0F),
+                      SceneTexturedVertex(96.0F, 70.0F, 256.0F, 256.0F, 1.0F),
+                      SceneTexturedVertex(48.0F, 70.0F, 0.0F, 256.0F, 1.0F)) &&
+        backend.SetAlphaTestFunction(7U) &&
+        backend.SetAlphaCombine(iterated);
+    backend.SetTextureCombineEnabled(false);
+
+    // Blending: half-transparent white over the gouraud triangle and the
+    // repeated checker, then additive.
+    ok = ok && backend.SetColorCombine(iterated) &&
+        backend.SetAlphaBlend(SceneBlend(1U, 5U)) &&
+        backend.DrawTriangle(SceneVertex(30.0F, 20.0F, 0xFFFFFF80U),
+                             SceneVertex(90.0F, 30.0F, 0xFFFFFF80U),
+                             SceneVertex(40.0F, 46.0F, 0x0080FF40U)) &&
+        backend.SetAlphaBlend(SceneBlend(4U, 4U)) &&
+        backend.DrawTriangle(SceneVertex(100.0F, 30.0F, 0x40000080U),
+                             SceneVertex(150.0F, 30.0F, 0x40000080U),
+                             SceneVertex(125.0F, 52.0F, 0x40000080U)) &&
+        backend.SetAlphaBlend(SceneBlend(4U, 0U));
+
+    // Depth: LESS keeps the nearer of overlapping triangles whatever the
+    // order; the last one is nearest only on its left half.
+    GlideDrawVertex near_left = SceneVertex(100.0F, 56.0F, 0x0000FFFFU);
+    GlideDrawVertex near_right = SceneVertex(156.0F, 56.0F, 0x0000FFFFU);
+    GlideDrawVertex near_bottom = SceneVertex(128.0F, 96.0F, 0x0000FFFFU);
+    near_left.ooz = 60000.0F;
+    near_right.ooz = 100.0F;
+    near_bottom.ooz = 30000.0F;
+    GlideDrawVertex far_a = SceneVertex(104.0F, 60.0F, 0xFF0000FFU);
+    GlideDrawVertex far_b = SceneVertex(152.0F, 64.0F, 0xFF0000FFU);
+    GlideDrawVertex far_c = SceneVertex(120.0F, 92.0F, 0xFF0000FFU);
+    far_a.ooz = far_b.ooz = far_c.ooz = 20000.0F;
+    GlideDrawVertex mid_a = SceneVertex(110.0F, 66.0F, 0x00FF00FFU);
+    GlideDrawVertex mid_b = SceneVertex(150.0F, 70.0F, 0x00FF00FFU);
+    GlideDrawVertex mid_c = SceneVertex(130.0F, 94.0F, 0x00FF00FFU);
+    mid_a.ooz = mid_b.ooz = mid_c.ooz = 40000.0F;
+    ok = ok && backend.SetDepthBufferMode(1U) &&
+        backend.SetDepthBufferFunction(1U) && backend.SetDepthMask(true) &&
+        backend.DrawTriangle(far_a, far_b, far_c) &&
+        backend.DrawTriangle(mid_a, mid_b, mid_c) &&
+        backend.DrawTriangle(near_left, near_right, near_bottom) &&
+        backend.SetDepthMask(false) && backend.SetDepthBufferMode(0U);
+
+    // Table fog across a quad whose w runs from 1 to 4096.
+    repiu::hle::GlideFogTable fog{};
+    for (std::uint32_t index = 0U; index < fog.size(); ++index)
+    {
+        fog[index] = static_cast<std::uint8_t>(index * 255U / 63U);
+    }
+    GlideDrawVertex fog_near_top = SceneVertex(4.0F, 98.0F, 0x2040FFFFU);
+    GlideDrawVertex fog_far_top = SceneVertex(76.0F, 98.0F, 0x2040FFFFU);
+    GlideDrawVertex fog_far_bottom = SceneVertex(76.0F, 116.0F, 0x2040FFFFU);
+    GlideDrawVertex fog_near_bottom = SceneVertex(4.0F, 116.0F, 0x2040FFFFU);
+    fog_near_top.fog_oow = fog_near_bottom.fog_oow = 1.0F;
+    fog_far_top.fog_oow = fog_far_bottom.fog_oow = 1.0F / 4096.0F;
+    ok = ok && backend.SetFogColor(0x00FF8000U) && backend.SetFogTable(fog) &&
+        backend.SetFogMode(2U) &&
+        DrawSceneQuad(backend, fog_near_top, fog_far_top, fog_far_bottom,
+                      fog_near_bottom) &&
+        backend.SetFogMode(0U);
+
+    // The constant color as local, SCALE_OTHER_ADD_LOCAL with a constant
+    // other, an inverted iterated color, and BLEND (7) by the local alpha.
+    ok = ok && backend.SetConstantColor(0xFF40C0A0U) &&
+        backend.SetColorCombine(SceneCombine(1U, 0U, 1U, 0U)) &&
+        backend.DrawTriangle(SceneVertex(80.0F, 98.0F, 0xFFFFFFFFU),
+                             SceneVertex(96.0F, 98.0F, 0xFFFFFFFFU),
+                             SceneVertex(80.0F, 116.0F, 0xFFFFFFFFU)) &&
+        backend.SetColorCombine(SceneCombine(4U, 1U, 0U, 2U)) &&
+        backend.DrawTriangle(SceneVertex(98.0F, 98.0F, 0x804020FFU),
+                             SceneVertex(114.0F, 98.0F, 0x204080FFU),
+                             SceneVertex(98.0F, 116.0F, 0x408020FFU)) &&
+        backend.SetColorCombine(SceneCombine(1U, 0U, 0U, 0U, true)) &&
+        backend.DrawTriangle(SceneVertex(116.0F, 98.0F, 0xFF8000FFU),
+                             SceneVertex(132.0F, 98.0F, 0x00FF80FFU),
+                             SceneVertex(116.0F, 116.0F, 0x8000FFFFU)) &&
+        backend.SetColorCombine(SceneCombine(7U, 3U, 0U, 2U)) &&
+        backend.DrawTriangle(SceneVertex(134.0F, 98.0F, 0xFF000000U),
+                             SceneVertex(156.0F, 98.0F, 0x00FF0080U),
+                             SceneVertex(134.0F, 116.0F, 0x0000FFFFU)) &&
+        backend.SetColorCombine(iterated);
+
+    // Points, lines, a convex polygon and a batch.
+    const GlideDrawVertex polygon[5] = {
+        SceneVertex(60.0F, 74.0F, 0xFFFF00FFU),
+        SceneVertex(74.0F, 78.0F, 0xFF00FFFFU),
+        SceneVertex(72.0F, 92.0F, 0x00FFFFFFU),
+        SceneVertex(58.0F, 94.0F, 0xFFFFFFFFU),
+        SceneVertex(52.0F, 84.0F, 0x808080FFU)};
+    const GlideDrawVertex batch[6] = {
+        SceneVertex(78.0F, 74.0F, 0xFF4040FFU),
+        SceneVertex(96.0F, 74.0F, 0xFF4040FFU),
+        SceneVertex(78.0F, 84.0F, 0xFF4040FFU),
+        SceneVertex(80.0F, 86.0F, 0x40FF40FFU),
+        SceneVertex(96.0F, 86.0F, 0x40FF40FFU),
+        SceneVertex(96.0F, 96.0F, 0x40FF40FFU)};
+    ok = ok && backend.DrawPolygon(polygon, 5U) &&
+        backend.DrawPrimitiveBatch(batch, 6U, GlideBatchPrimitive::kTriangles);
+    for (std::uint32_t index = 0U; ok && index < 8U; ++index)
+    {
+        const float x = 4.0F + static_cast<float>(index) * 5.0F;
+        ok = backend.DrawPoint(SceneVertex(x + 0.5F, 50.5F, 0xFFFFFFFFU)) &&
+            backend.DrawLine(SceneVertex(x, 40.0F, 0xFFFF00FFU),
+                             SceneVertex(x + 4.0F, 48.0F, 0x00FFFFFFU));
+    }
+
+    // Culling: of a clockwise and a counter-clockwise triangle, mode 1
+    // keeps one; with the color mask off a triangle leaves no trace.
+    ok = ok && backend.SetCullMode(1U) &&
+        backend.DrawTriangle(SceneVertex(4.0F, 70.0F, 0xFFFFFFFFU),
+                             SceneVertex(20.0F, 70.0F, 0xFFFFFFFFU),
+                             SceneVertex(4.0F, 52.0F, 0xFFFFFFFFU)) &&
+        backend.DrawTriangle(SceneVertex(22.0F, 52.0F, 0xFF00FFFFU),
+                             SceneVertex(38.0F, 52.0F, 0xFF00FFFFU),
+                             SceneVertex(22.0F, 70.0F, 0xFF00FFFFU)) &&
+        backend.SetCullMode(0U) && backend.SetColorMask(false, true) &&
+        backend.DrawTriangle(SceneVertex(0.0F, 0.0F, 0xFFFFFFFFU),
+                             SceneVertex(160.0F, 0.0F, 0xFFFFFFFFU),
+                             SceneVertex(0.0F, 120.0F, 0xFFFFFFFFU)) &&
+        backend.SetColorMask(true, true);
+    return ok;
+}
+
+// The LFB blit: a gradient surface, drawn over by a triangle.
+bool DrawSceneLfb(repiu::engine::GlideOpenGlBackend& backend,
+                  std::uint32_t width, std::uint32_t height, bool flip_v)
+{
+    std::vector<std::uint8_t> surface(width * height * 4U);
+    for (std::uint32_t y = 0U; y < height; ++y)
+    {
+        for (std::uint32_t x = 0U; x < width; ++x)
+        {
+            std::uint8_t* const pixel = surface.data() + (y * width + x) * 4U;
+            pixel[0] = static_cast<std::uint8_t>(x * 255U / width);
+            pixel[1] = static_cast<std::uint8_t>(y * 255U / height);
+            pixel[2] = static_cast<std::uint8_t>(y < height / 4U ? 255U : 0U);
+            pixel[3] = 255U;
+        }
+    }
+    const auto iterated = SceneCombine(1U, 0U, 0U, 0U);
+    return backend.SetColorCombine(iterated) &&
+        backend.SetAlphaCombine(iterated) &&
+        backend.PresentLfbSurface(surface.data(), width, height, flip_v,
+                                  false) &&
+        backend.DrawTriangle(SceneVertex(10.0F, 10.0F, 0xFFFFFFFFU),
+                             SceneVertex(50.0F, 10.0F, 0xFFFFFFFFU),
+                             SceneVertex(10.0F, 40.0F, 0x000000FFU));
+}
+
+bool WriteSceneImage(const std::string& path, std::uint32_t width,
+                     std::uint32_t height, const std::vector<std::uint8_t>& rgba)
+{
+    std::ofstream file(path, std::ios::binary);
+    const std::uint32_t header[2] = {width, height};
+    file.write(reinterpret_cast<const char*>(header), sizeof(header));
+    file.write(reinterpret_cast<const char*>(rgba.data()),
+               static_cast<std::streamsize>(rgba.size()));
+    return static_cast<bool>(file);
+}
+
+bool CompareSceneImage(const std::string& name, const std::string& path,
+                       std::uint32_t width, std::uint32_t height,
+                       const std::vector<std::uint8_t>& rgba)
+{
+    std::ifstream file(path, std::ios::binary);
+    std::uint32_t header[2] = {};
+    file.read(reinterpret_cast<char*>(header), sizeof(header));
+    std::vector<std::uint8_t> reference(rgba.size());
+    file.read(reinterpret_cast<char*>(reference.data()),
+              static_cast<std::streamsize>(reference.size()));
+    if (!file || header[0] != width || header[1] != height)
+    {
+        std::cout << "glide_scene_" << name << "_reference=unreadable "
+                  << path << '\n';
+        return false;
+    }
+    std::size_t differing = 0U;
+    int largest = 0;
+    for (std::size_t index = 0U; index < rgba.size(); index += 4U)
+    {
+        int pixel_largest = 0;
+        for (std::size_t channel = 0U; channel < 3U; ++channel)
+        {
+            pixel_largest = (std::max)(
+                pixel_largest, std::abs(static_cast<int>(rgba[index + channel]) -
+                                        static_cast<int>(reference[index + channel])));
+        }
+        differing += pixel_largest != 0 ? 1U : 0U;
+        largest = (std::max)(largest, pixel_largest);
+    }
+    std::cout << "glide_scene_" << name << "_differing_pixels=" << differing
+              << "/" << rgba.size() / 4U << " largest_delta=" << largest
+              << '\n';
+    return differing == 0U;
+}
+
+// Draws one scene in a fresh window and reads it back at the drawable's full
+// resolution, so a scaled window compares every rendered pixel.
+bool RenderScene(const char* name, std::uint32_t origin, bool lfb, bool flip_v,
+                 const std::string& output_prefix,
+                 const std::string& reference_prefix)
+{
+    constexpr std::uint32_t kWidth = 160U;
+    constexpr std::uint32_t kHeight = 120U;
+    repiu::engine::GlideOpenGlBackend backend;
+    backend.BindHostThread();
+    if (!Check(backend.OpenWindowed(kWidth, kHeight, 2U, 1U, origin),
+               "scene backend did not open") ||
+        !Check(!backend.is_dummy(), "scene backend fell back to the dummy"))
+    {
+        return false;
+    }
+    int drawable_width = 0;
+    int drawable_height = 0;
+    SDL_Window* const window = SDL_GL_GetCurrentWindow();
+    if (!Check(window != nullptr &&
+                   SDL_GetWindowSizeInPixels(window, &drawable_width,
+                                             &drawable_height) &&
+                   drawable_width > 0 && drawable_height > 0,
+               "scene drawable size unavailable"))
+    {
+        backend.Close();
+        return false;
+    }
+    const bool drawn = lfb ? DrawSceneLfb(backend, kWidth, kHeight, flip_v)
+                           : DrawSceneGeometry(backend);
+    std::vector<std::uint8_t> rgba;
+    const auto width = static_cast<std::uint32_t>(drawable_width);
+    const auto height = static_cast<std::uint32_t>(drawable_height);
+    const bool read = drawn && backend.ReadbackFramebuffer(width, height, &rgba);
+    backend.Close();
+    if (!Check(drawn, "scene draw failed") ||
+        !Check(read, "scene readback failed"))
+    {
+        return false;
+    }
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (const std::uint8_t value : rgba)
+    {
+        hash = (hash ^ value) * 1099511628211ULL;
+    }
+    std::cout << "glide_scene_" << name << "=" << width << "x" << height
+              << " fnv1a=" << std::hex << hash << std::dec << '\n';
+    const std::string suffix = std::string(".") + name + ".rgba";
+    if (!Check(WriteSceneImage(output_prefix + suffix, width, height, rgba),
+               "scene image write failed"))
+    {
+        return false;
+    }
+    return reference_prefix.empty() ||
+        CompareSceneImage(name, reference_prefix + suffix, width, height, rgba);
+}
+
+bool RunOpenGlSceneProbe(const std::string& output_prefix,
+                         const std::string& reference_prefix)
+{
+    const bool upper_left =
+        RenderScene("upper_left", 0U, false, false, output_prefix,
+                    reference_prefix);
+    const bool lower_left =
+        RenderScene("lower_left", 1U, false, false, output_prefix,
+                    reference_prefix);
+    const bool lfb = RenderScene("lfb", 0U, true, false, output_prefix,
+                                 reference_prefix);
+    const bool lfb_flipped = RenderScene("lfb_flipped", 0U, true, true,
+                                         output_prefix, reference_prefix);
+    return Check(upper_left && lower_left && lfb && lfb_flipped,
+                 "scene differs from the reference");
+}
 #endif
 
 }  // namespace
@@ -470,6 +902,14 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    // Issue #69: --opengl-scene <output-prefix> [<reference-prefix>].
+    if (argc >= 3 && std::strcmp(argv[1], "--opengl-scene") == 0)
+    {
+        if (!RunOpenGlSceneProbe(argv[2], argc >= 4 ? argv[3] : ""))
+        {
+            return 1;
+        }
+    }
     if (argc == 2 && std::strcmp(argv[1], "--opengl-post-shader") == 0)
     {
         if (!RunOpenGlPostShaderProbe())

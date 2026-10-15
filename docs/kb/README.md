@@ -48,6 +48,7 @@ flowchart TD
 * [CAT702 PIU 직렬 보안 장치](cat702-piu-security-device.md)
 * [libretro GLSL 후처리 shader 형식](libretro-glsl-post-shaders.md)
 * [Emscripten 선형 메모리 배치와 Node 실행](emscripten-linear-memory-and-node.md)
+* [데스크톱 OpenGL core와 GLES 3 / WebGL2의 공통 부분집합](desktop-gl-core-and-webgl2-subset.md)
 
 # rePIU Technical Knowledge Base Index
 
@@ -77,3 +78,4 @@ include source links.
 * [CAT702 PIU serial security device](cat702-piu-security-device.md)
 * [The libretro GLSL post-processing shader format](libretro-glsl-post-shaders.md)
 * [Emscripten's linear-memory layout and running under Node](emscripten-linear-memory-and-node.md)
+* [The common subset of desktop OpenGL core and GLES 3 / WebGL2](desktop-gl-core-and-webgl2-subset.md)

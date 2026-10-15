@@ -3,6 +3,7 @@
 
 #include "repiu/hle/glide_hle.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -32,6 +33,14 @@ public:
     void SetTextureEnabled(bool enabled);
     // Bypass guest combine/fog equations while copying the CPU LFB texture.
     void SetBlitMode(bool enabled);
+    // Issue #69: what the fixed-function pipeline held -- the projection
+    // (glOrtho), the point size (glPointSize) and the alpha test
+    // (glAlphaFunc: a GR_CMP_* function, 7 = always, and a 0..1 reference).
+    void SetProjection(const float matrix[16]);
+    void SetPointSize(float size);
+    void SetAlphaTest(std::uint32_t function, float reference);
+    // Makes the combine program current again after another pass.
+    void Use();
     void Shutdown();
 
     const std::string& message() const { return message_; }

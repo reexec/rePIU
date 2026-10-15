@@ -40,4 +40,6 @@ bool SelectWslD3d12Driver() {
   return false;
 }
 
+GlContextRequest RequestedGlContext() { return GlContextRequest{false, 3, 3}; }
+
 } // namespace repiu::platform

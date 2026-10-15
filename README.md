@@ -89,8 +89,11 @@ Windows host system date.*
 * Git for Windows와 Windows PowerShell
 * 최초 의존성 준비를 위한 인터넷 연결
 * 게임 실행 시 합법적으로 보유한 해당 MAME ROM ZIP과 CHD
+* OpenGL 3.3 core를 지원하는 GPU 드라이버(issue #69부터. 2010년 이후의 거의 모든 GPU. 지원하지 않으면 화면 없이 실행되고 stderr에 이유가 찍힙니다)
 
 빌드는 반드시 `Win32`/x86로 생성됩니다. CMake는 설치된 `spdlog`를 먼저 찾고, 없으면 configure 과정에서 `spdlog` 1.14.1을 가져옵니다. 테스트 setup은 OpenWatcom을 `tools/openwatcom/`에 로컬 설치할 수 있습니다.
+
+*Running needs a GPU driver with OpenGL 3.3 core (since issue #69; nearly every GPU since 2010). Without it the game runs with no picture and stderr says why.*
 
 *Builds target Win32/x86. CMake uses an installed `spdlog` package or fetches version 1.14.1 during configuration. Test setup can install OpenWatcom locally under `tools/openwatcom/`.*
 

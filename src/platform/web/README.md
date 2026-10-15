@@ -19,7 +19,7 @@
 | `fault_handler.cpp` | **stub** — 하드웨어 폴트를 사용자 핸들러로 전달하는 개념이 없습니다 |
 | `virtual_memory.cpp` | **실제 구현 (issue #67)** — 게스트 영역 `[0x00010000, 0x10000000)`의 예약기와 페이지 보호 표. 보호는 rex86의 페이지 속성표가 지킵니다 |
 | `host_cpu_entry_state.cpp` | **실제 구현 (issue #67)** — WOW64 스레드가 보는 셀렉터·FPU 값, 가짜 TEB 한 페이지, 고정 CPUID 표 |
-| `host_reports.cpp` | **"없음" (issue #67)** — 크래시 보고, 폴트 보고의 호스트 정보, 모듈·심볼 이름, 프로세스 간 텔레메트리. 진단만 잃습니다 |
+| `host_reports.cpp` | **"없음" (issue #67)** — 크래시 보고, 폴트 보고의 호스트 정보, 모듈·심볼 이름, 프로세스 간 텔레메트리. 진단만 잃습니다. 렌더러가 요청할 GL 문맥은 ES 3.0(WebGL2)입니다(issue #69; 고정 기능 GL stub `legacy_gl_stubs.cpp`는 렌더러가 GLES 3 부분집합으로 옮겨 지워졌습니다) |
 | `host_process.cpp` | **stub** — 브라우저에 자식 프로세스가 없습니다 |
 
 ## 여기 없는 것 — `host_environment`, `worker_signal`, `host_trace_descriptor`
@@ -74,7 +74,7 @@ That is why the virtual memory went from a stub to an implementation
 | `fault_handler.cpp` | **stub** — there is no notion of delivering a hardware fault to a user handler |
 | `virtual_memory.cpp` | **real (issue #67)** — a reserver and page-protection record over the guest range `[0x00010000, 0x10000000)`; rex86's page attribute table enforces the protection |
 | `host_cpu_entry_state.cpp` | **real (issue #67)** — the selector and FPU values a WOW64 thread sees, a stand-in TEB page, a fixed CPUID table |
-| `host_reports.cpp` | **"none" (issue #67)** — the crash reporter, the fault report's host details, module and symbol names, cross-process telemetry; only diagnostics are lost |
+| `host_reports.cpp` | **"none" (issue #67)** — the crash reporter, the fault report's host details, module and symbol names, cross-process telemetry; only diagnostics are lost. The GL context the renderer asks for is ES 3.0 (WebGL2) (issue #69; the fixed-function GL stubs, `legacy_gl_stubs.cpp`, went when the renderer moved to the GLES 3 subset) |
 | `host_process.cpp` | **stub** — a browser has no child processes |
 
 ## What is not here — `host_environment`, `worker_signal`, `host_trace_descriptor`

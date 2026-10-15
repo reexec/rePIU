@@ -482,6 +482,12 @@ target_sources(repiu_exe
         src/engine/out_of_arena_step_census.cpp
         src/engine/glide_opengl_backend.cpp
         src/engine/glide_opengl_shader.cpp
+        # Issue #69: the GL 3.3 core / ES 3.0 subset the renderer draws with.
+        src/engine/gl_api.cpp
+        src/engine/gl_shader_dialect.cpp
+        src/engine/gl_unit_quad.cpp
+        src/engine/glide_vertex_stream.cpp
+        src/engine/glide_framebuffer_pair.cpp
         src/engine/glide_osd.cpp
         src/engine/imgui_ui_scale.cpp
         src/engine/glide_post_process.cpp
@@ -601,7 +607,6 @@ if(REPIU_PLATFORM STREQUAL "web")
             src/platform/web/host_cpu_entry_state.cpp
             src/platform/web/host_reports.cpp
             src/platform/web/guest_stack_switch.cpp
-            src/platform/web/legacy_gl_stubs.cpp
             src/platform/linux/host_trace_descriptor.cpp
     )
 endif()
@@ -1205,6 +1210,11 @@ function(repiu_link_web_engine target)
                 -sINITIAL_MEMORY=805306368
                 -sALLOW_MEMORY_GROWTH=1
                 -sSTACK_SIZE=16777216
+                # Issue #69: the renderer is the WebGL2 (ES 3.0) subset and
+                # finds its functions beyond 1.1 by name, as on the desktop.
+                -sMIN_WEBGL_VERSION=2
+                -sMAX_WEBGL_VERSION=2
+                -sGL_ENABLE_GET_PROC_ADDRESS=1
         )
     endif()
 endfunction()

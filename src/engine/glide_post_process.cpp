@@ -1,7 +1,10 @@
 #include "repiu/engine/glide_post_process.h"
 
+#include "repiu/engine/gl_api.h"
+#include "repiu/engine/gl_shader_dialect.h"
+#include "repiu/engine/gl_unit_quad.h"
+
 #include <SDL3/SDL.h>
-#include <SDL3/SDL_opengl.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -12,52 +15,8 @@ namespace repiu::engine
 
 struct GlidePostProcess::Implementation
 {
-    using CreateShader = GLuint(APIENTRY*)(GLenum);
-    using ShaderSource = void(APIENTRY*)(GLuint, GLsizei, const char* const*,
-                                         const GLint*);
-    using CompileShader = void(APIENTRY*)(GLuint);
-    using GetShaderiv = void(APIENTRY*)(GLuint, GLenum, GLint*);
-    using GetShaderInfoLog = void(APIENTRY*)(GLuint, GLsizei, GLsizei*, char*);
-    using DeleteShader = void(APIENTRY*)(GLuint);
-    using CreateProgram = GLuint(APIENTRY*)();
-    using AttachShader = void(APIENTRY*)(GLuint, GLuint);
-    using BindAttribLocation = void(APIENTRY*)(GLuint, GLuint, const char*);
-    using LinkProgram = void(APIENTRY*)(GLuint);
-    using GetProgramiv = void(APIENTRY*)(GLuint, GLenum, GLint*);
-    using GetProgramInfoLog = void(APIENTRY*)(GLuint, GLsizei, GLsizei*, char*);
-    using DeleteProgram = void(APIENTRY*)(GLuint);
-    using UseProgram = void(APIENTRY*)(GLuint);
-    using GetUniformLocation = GLint(APIENTRY*)(GLuint, const char*);
-    using Uniform1i = void(APIENTRY*)(GLint, GLint);
-    using Uniform1f = void(APIENTRY*)(GLint, GLfloat);
-    using Uniform2f = void(APIENTRY*)(GLint, GLfloat, GLfloat);
-    using UniformMatrix4fv = void(APIENTRY*)(GLint, GLsizei, GLboolean,
-                                             const GLfloat*);
-    using VertexAttrib4f = void(APIENTRY*)(GLuint, GLfloat, GLfloat, GLfloat,
-                                           GLfloat);
-    using ActiveTexture = void(APIENTRY*)(GLenum);
-
-    CreateShader create_shader = nullptr;
-    ShaderSource shader_source = nullptr;
-    CompileShader compile_shader = nullptr;
-    GetShaderiv get_shader_iv = nullptr;
-    GetShaderInfoLog get_shader_info_log = nullptr;
-    DeleteShader delete_shader = nullptr;
-    CreateProgram create_program = nullptr;
-    AttachShader attach_shader = nullptr;
-    BindAttribLocation bind_attrib_location = nullptr;
-    LinkProgram link_program = nullptr;
-    GetProgramiv get_program_iv = nullptr;
-    GetProgramInfoLog get_program_info_log = nullptr;
-    DeleteProgram delete_program = nullptr;
-    UseProgram use_program = nullptr;
-    GetUniformLocation get_uniform_location = nullptr;
-    Uniform1i uniform_1i = nullptr;
-    Uniform1f uniform_1f = nullptr;
-    Uniform2f uniform_2f = nullptr;
-    UniformMatrix4fv uniform_matrix_4fv = nullptr;
-    VertexAttrib4f vertex_attrib_4f = nullptr;
-    ActiveTexture active_texture = nullptr;
+    GlApi gl;
+    GlUnitQuad quad;
 
     bool initialized = false;
     std::filesystem::path directory;
@@ -77,30 +36,11 @@ struct GlidePostProcess::Implementation
     GLint frame_count = -1;
     GLint frame_direction = -1;
 
-    GLuint scene_texture = 0;
-    std::uint32_t scene_width = 0;
-    std::uint32_t scene_height = 0;
     std::uint32_t frames = 0;
 };
 
 namespace
 {
-
-constexpr GLenum kGlVertexShader = 0x8B31;
-constexpr GLenum kGlFragmentShader = 0x8B30;
-constexpr GLenum kGlCompileStatus = 0x8B81;
-constexpr GLenum kGlLinkStatus = 0x8B82;
-constexpr GLenum kGlInfoLogLength = 0x8B84;
-constexpr GLenum kGlCurrentProgram = 0x8B8D;
-constexpr GLenum kGlTexture0 = 0x84C0;
-constexpr GLenum kGlClampToEdge = 0x812F;
-constexpr GLenum kGlRgba8 = 0x8058;
-
-// The attribute slots bound before linking. Slot 0 aliases the fixed-function
-// vertex, so setting it inside glBegin/glEnd emits the vertex.
-constexpr GLuint kVertexCoordSlot = 0;
-constexpr GLuint kTexCoordSlot = 1;
-constexpr GLuint kColorSlot = 2;
 
 // Orthographic projection of the unit square onto clip space, column-major.
 constexpr GLfloat kUnitSquareProjection[16] = {
@@ -110,112 +50,16 @@ constexpr GLfloat kUnitSquareProjection[16] = {
     -1.0F, -1.0F, 0.0F, 1.0F,
 };
 
-// SDL_FunctionPointer rather than void*, for the reason the shader module's
-// copy records: C++ does not promise a function pointer fits an object one.
-template <typename Function>
-bool ResolveOpenGlFunction(const char* name, Function* function)
+void ReleaseProgram(GlidePostProcess::Implementation* state)
 {
-    SDL_FunctionPointer address = SDL_GL_GetProcAddress(name);
-    const auto value = reinterpret_cast<std::uintptr_t>(address);
-    if (address == nullptr || value <= 3U || value == ~std::uintptr_t{0})
+    if (state->program != 0U)
     {
-        return false;
+        state->gl.delete_program(state->program);
+        state->program = 0;
     }
-    *function = reinterpret_cast<Function>(address);
-    return true;
-}
-
-bool ResolveFunctions(GlidePostProcess::Implementation* gl)
-{
-    return ResolveOpenGlFunction("glCreateShader", &gl->create_shader) &&
-        ResolveOpenGlFunction("glShaderSource", &gl->shader_source) &&
-        ResolveOpenGlFunction("glCompileShader", &gl->compile_shader) &&
-        ResolveOpenGlFunction("glGetShaderiv", &gl->get_shader_iv) &&
-        ResolveOpenGlFunction("glGetShaderInfoLog",
-                              &gl->get_shader_info_log) &&
-        ResolveOpenGlFunction("glDeleteShader", &gl->delete_shader) &&
-        ResolveOpenGlFunction("glCreateProgram", &gl->create_program) &&
-        ResolveOpenGlFunction("glAttachShader", &gl->attach_shader) &&
-        ResolveOpenGlFunction("glBindAttribLocation",
-                              &gl->bind_attrib_location) &&
-        ResolveOpenGlFunction("glLinkProgram", &gl->link_program) &&
-        ResolveOpenGlFunction("glGetProgramiv", &gl->get_program_iv) &&
-        ResolveOpenGlFunction("glGetProgramInfoLog",
-                              &gl->get_program_info_log) &&
-        ResolveOpenGlFunction("glDeleteProgram", &gl->delete_program) &&
-        ResolveOpenGlFunction("glUseProgram", &gl->use_program) &&
-        ResolveOpenGlFunction("glGetUniformLocation",
-                              &gl->get_uniform_location) &&
-        ResolveOpenGlFunction("glUniform1i", &gl->uniform_1i) &&
-        ResolveOpenGlFunction("glUniform1f", &gl->uniform_1f) &&
-        ResolveOpenGlFunction("glUniform2f", &gl->uniform_2f) &&
-        ResolveOpenGlFunction("glUniformMatrix4fv",
-                              &gl->uniform_matrix_4fv) &&
-        ResolveOpenGlFunction("glVertexAttrib4f", &gl->vertex_attrib_4f) &&
-        ResolveOpenGlFunction("glActiveTexture", &gl->active_texture);
-}
-
-std::string ShaderLog(GlidePostProcess::Implementation* gl, GLuint shader)
-{
-    GLint length = 0;
-    gl->get_shader_iv(shader, kGlInfoLogLength, &length);
-    std::string log(length > 0 ? static_cast<std::size_t>(length) : 0U, '\0');
-    if (length > 0)
-    {
-        gl->get_shader_info_log(shader, length, nullptr, log.data());
-    }
-    while (!log.empty() && (log.back() == '\0' || log.back() == '\n'))
-    {
-        log.pop_back();
-    }
-    return log;
-}
-
-std::string ProgramLog(GlidePostProcess::Implementation* gl, GLuint program)
-{
-    GLint length = 0;
-    gl->get_program_iv(program, kGlInfoLogLength, &length);
-    std::string log(length > 0 ? static_cast<std::size_t>(length) : 0U, '\0');
-    if (length > 0)
-    {
-        gl->get_program_info_log(program, length, nullptr, log.data());
-    }
-    while (!log.empty() && (log.back() == '\0' || log.back() == '\n'))
-    {
-        log.pop_back();
-    }
-    return log;
-}
-
-GLuint CompileStage(GlidePostProcess::Implementation* gl, GLenum type,
-                    const std::string& source, std::string* error)
-{
-    const GLuint shader = gl->create_shader(type);
-    const char* text = source.c_str();
-    gl->shader_source(shader, 1, &text, nullptr);
-    gl->compile_shader(shader);
-    GLint compiled = GL_FALSE;
-    gl->get_shader_iv(shader, kGlCompileStatus, &compiled);
-    if (compiled != GL_TRUE)
-    {
-        *error = std::string(type == kGlVertexShader ? "vertex" : "fragment") +
-            " stage failed to compile: " + ShaderLog(gl, shader);
-        gl->delete_shader(shader);
-        return 0;
-    }
-    return shader;
-}
-
-void ReleaseProgram(GlidePostProcess::Implementation* gl)
-{
-    if (gl->program != 0U)
-    {
-        gl->delete_program(gl->program);
-        gl->program = 0;
-    }
-    gl->parameters.clear();
-    gl->parameter_locations.clear();
-    gl->active_id = kPostShaderNoneId;
+    state->parameters.clear();
+    state->parameter_locations.clear();
+    state->active_id = kPostShaderNoneId;
 }
 
 std::filesystem::path ExecutableDirectory()
@@ -236,43 +80,39 @@ GlidePostProcess::~GlidePostProcess() = default;
 
 bool GlidePostProcess::Initialize(std::string* message)
 {
-    Implementation* gl = implementation_.get();
-    if (gl->initialized)
+    Implementation* state = implementation_.get();
+    if (state->initialized)
     {
         return true;
     }
-    if (!ResolveFunctions(gl))
+    std::string missing;
+    if (!LoadGlApi(&state->gl, &missing) || !state->quad.Initialize(&state->gl))
     {
         if (message != nullptr)
         {
-            *message = "OpenGL shader entry points are unavailable";
+            *message = missing.empty()
+                ? "OpenGL vertex arrays are unavailable"
+                : "OpenGL entry point unavailable: " + missing;
         }
         return false;
     }
-    gl->directory = ResolvePostShaderDirectory(ExecutableDirectory());
-    gl->directory_text = gl->directory.string();
-    gl->catalog = ListPostShaders(gl->directory);
-    gl->initialized = true;
+    state->directory = ResolvePostShaderDirectory(ExecutableDirectory());
+    state->directory_text = state->directory.string();
+    state->catalog = ListPostShaders(state->directory);
+    state->initialized = true;
     return true;
 }
 
 void GlidePostProcess::Shutdown()
 {
-    Implementation* gl = implementation_.get();
-    if (!gl->initialized)
+    Implementation* state = implementation_.get();
+    if (!state->initialized)
     {
         return;
     }
-    ReleaseProgram(gl);
-    if (gl->scene_texture != 0U)
-    {
-        GLuint name = gl->scene_texture;
-        glDeleteTextures(1, &name);
-        gl->scene_texture = 0;
-    }
-    gl->scene_width = 0;
-    gl->scene_height = 0;
-    gl->initialized = false;
+    ReleaseProgram(state);
+    state->quad.Shutdown();
+    state->initialized = false;
 }
 
 bool GlidePostProcess::initialized() const
@@ -312,232 +152,168 @@ std::vector<PostShaderParameter>& GlidePostProcess::parameters()
 
 bool GlidePostProcess::Select(std::string_view id)
 {
-    Implementation* gl = implementation_.get();
-    gl->last_error.clear();
-    if (!gl->initialized)
+    Implementation* state = implementation_.get();
+    state->last_error.clear();
+    if (!state->initialized)
     {
-        gl->last_error = "post-processing is not initialized";
+        state->last_error = "post-processing is not initialized";
         return false;
     }
-    ReleaseProgram(gl);
+    ReleaseProgram(state);
     if (id.empty() || id == kPostShaderNoneId)
     {
         std::fprintf(stderr, "[repiu-post] shader: none\n");
         return true;
     }
 
-    const PostShaderEntry* entry = FindPostShader(gl->catalog, id);
+    const PostShaderEntry* entry = FindPostShader(state->catalog, id);
     std::string text;
     PostShaderProgramSource source;
     if (entry == nullptr)
     {
-        gl->last_error = "no shader named '" + std::string(id) + "' in " +
-            gl->directory_text + " or built in";
+        state->last_error = "no shader named '" + std::string(id) + "' in " +
+            state->directory_text + " or built in";
     }
-    else if (LoadPostShaderText(*entry, &text, &gl->last_error) &&
-             BuildPostShaderProgramSource(text, &source, &gl->last_error))
+    else if (LoadPostShaderText(*entry, &text, &state->last_error) &&
+             BuildPostShaderProgramSource(text, &source, &state->last_error))
     {
-        const GLuint vertex =
-            CompileStage(gl, kGlVertexShader, source.vertex, &gl->last_error);
-        const GLuint fragment = vertex == 0U
-            ? 0U
-            : CompileStage(gl, kGlFragmentShader, source.fragment,
-                           &gl->last_error);
-        if (vertex != 0U && fragment != 0U)
-        {
-            const GLuint program = gl->create_program();
-            gl->attach_shader(program, vertex);
-            gl->attach_shader(program, fragment);
-            gl->bind_attrib_location(program, kVertexCoordSlot, "VertexCoord");
-            gl->bind_attrib_location(program, kTexCoordSlot, "TexCoord");
-            gl->bind_attrib_location(program, kColorSlot, "COLOR");
-            gl->link_program(program);
-            GLint linked = GL_FALSE;
-            gl->get_program_iv(program, kGlLinkStatus, &linked);
-            if (linked == GL_TRUE)
-            {
-                gl->program = program;
-            }
-            else
-            {
-                gl->last_error = "link failed: " + ProgramLog(gl, program);
-                gl->delete_program(program);
-            }
-        }
-        if (vertex != 0U)
-        {
-            gl->delete_shader(vertex);
-        }
-        if (fragment != 0U)
-        {
-            gl->delete_shader(fragment);
-        }
+        // Issue #69: the shaders are written in the GLSL 1.10 style of
+        // RetroArch's compatibility contexts; carry them to the context's
+        // dialect, binding the shared vertex layout's slots by their names.
+        const std::string vertex = AdaptLegacyGlslStage(
+            source.vertex, state->gl.es, GlslStage::kVertex);
+        const std::string fragment = AdaptLegacyGlslStage(
+            source.fragment, state->gl.es, GlslStage::kFragment);
+        state->program =
+            BuildGlProgram(state->gl, vertex.c_str(), fragment.c_str(),
+                           "VertexCoord", "COLOR", "TexCoord",
+                           &state->last_error);
     }
 
-    if (gl->program == 0U)
+    if (state->program == 0U)
     {
         std::fprintf(stderr, "[repiu-post] shader '%.*s' not applied: %s\n",
                      static_cast<int>(id.size()), id.data(),
-                     gl->last_error.c_str());
+                     state->last_error.c_str());
         return false;
     }
 
-    gl->active_id = std::string(id);
-    gl->mvp_matrix = gl->get_uniform_location(gl->program, "MVPMatrix");
-    gl->texture = gl->get_uniform_location(gl->program, "Texture");
-    gl->input_size = gl->get_uniform_location(gl->program, "InputSize");
-    gl->texture_size = gl->get_uniform_location(gl->program, "TextureSize");
-    gl->output_size = gl->get_uniform_location(gl->program, "OutputSize");
-    gl->frame_count = gl->get_uniform_location(gl->program, "FrameCount");
-    gl->frame_direction =
-        gl->get_uniform_location(gl->program, "FrameDirection");
-    gl->parameters = std::move(source.parameters);
-    for (const PostShaderParameter& parameter : gl->parameters)
+    const GlApi& gl = state->gl;
+    state->active_id = std::string(id);
+    state->mvp_matrix = gl.get_uniform_location(state->program, "MVPMatrix");
+    state->texture = gl.get_uniform_location(state->program, "Texture");
+    state->input_size = gl.get_uniform_location(state->program, "InputSize");
+    state->texture_size =
+        gl.get_uniform_location(state->program, "TextureSize");
+    state->output_size = gl.get_uniform_location(state->program, "OutputSize");
+    state->frame_count = gl.get_uniform_location(state->program, "FrameCount");
+    state->frame_direction =
+        gl.get_uniform_location(state->program, "FrameDirection");
+    state->parameters = std::move(source.parameters);
+    for (const PostShaderParameter& parameter : state->parameters)
     {
-        gl->parameter_locations.push_back(
-            gl->get_uniform_location(gl->program, parameter.name.c_str()));
+        state->parameter_locations.push_back(
+            gl.get_uniform_location(state->program, parameter.name.c_str()));
     }
-    gl->frames = 0;
+    state->frames = 0;
     std::fprintf(stderr, "[repiu-post] shader: %s (%zu parameters)\n",
-                 gl->active_id.c_str(), gl->parameters.size());
+                 state->active_id.c_str(), state->parameters.size());
     return true;
 }
 
 bool GlidePostProcess::Reload()
 {
-    Implementation* gl = implementation_.get();
-    if (!gl->initialized)
+    Implementation* state = implementation_.get();
+    if (!state->initialized)
     {
         return false;
     }
-    const std::string id = gl->active_id;
-    gl->catalog = ListPostShaders(gl->directory);
+    const std::string id = state->active_id;
+    state->catalog = ListPostShaders(state->directory);
     return Select(id);
 }
 
-void GlidePostProcess::Apply(std::uint32_t x, std::uint32_t y,
-                             std::uint32_t drawable_width,
-                             std::uint32_t drawable_height,
+void GlidePostProcess::Apply(unsigned int input_texture, std::uint32_t x,
+                             std::uint32_t y, std::uint32_t width,
+                             std::uint32_t height,
                              std::uint32_t logical_width,
                              std::uint32_t logical_height)
 {
-    Implementation* gl = implementation_.get();
-    if (gl->program == 0U || drawable_width == 0U || drawable_height == 0U)
+    Implementation* state = implementation_.get();
+    if (state->program == 0U || input_texture == 0U || width == 0U ||
+        height == 0U)
     {
         return;
     }
     if (logical_width == 0U || logical_height == 0U)
     {
-        logical_width = drawable_width;
-        logical_height = drawable_height;
+        logical_width = width;
+        logical_height = height;
     }
-    const auto width = static_cast<GLsizei>(drawable_width);
-    const auto height = static_cast<GLsizei>(drawable_height);
+    const GlApi& gl = state->gl;
 
-    // Glide state outlives the swap, so everything the pass changes is put
-    // back: the attribute stack covers enables, masks, viewport, draw and read
-    // buffers, and every unit's texture binding; the program is separate.
-    GLint previous_program = 0;
-    glGetIntegerv(kGlCurrentProgram, &previous_program);
-    glPushAttrib(GL_ALL_ATTRIB_BITS);
-
-    gl->active_texture(kGlTexture0);
-    if (gl->scene_texture == 0U)
-    {
-        GLuint name = 0;
-        glGenTextures(1, &name);
-        gl->scene_texture = name;
-    }
-    glBindTexture(GL_TEXTURE_2D, gl->scene_texture);
-    if (gl->scene_width != drawable_width ||
-        gl->scene_height != drawable_height)
-    {
-        glTexImage2D(GL_TEXTURE_2D, 0, kGlRgba8, width, height, 0, GL_RGBA,
-                     GL_UNSIGNED_BYTE, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, kGlClampToEdge);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, kGlClampToEdge);
-        gl->scene_width = drawable_width;
-        gl->scene_height = drawable_height;
-    }
-    glReadBuffer(GL_BACK);
-    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, static_cast<GLint>(x),
-                        static_cast<GLint>(y), width, height);
+    gl.active_texture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, input_texture);
+    // The shaders sample between the picture's pixels (the crt warp), so the
+    // input is filtered; the present pass sets its own filter each frame.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
-    glDisable(GL_ALPHA_TEST);
     glDisable(GL_SCISSOR_TEST);
-    glDisable(GL_STENCIL_TEST);
-    glDisable(GL_FOG);
-    glDrawBuffer(GL_BACK);
-    glViewport(static_cast<GLint>(x), static_cast<GLint>(y), width, height);
-    // Alpha is left as the game wrote it, so no translucency reaches a
-    // compositor through the window's alpha channel.
+    glViewport(static_cast<GLint>(x), static_cast<GLint>(y),
+               static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+    // Alpha is left as it was, so no translucency reaches a compositor
+    // through the window's alpha channel.
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
 
-    gl->use_program(gl->program);
-    if (gl->mvp_matrix >= 0)
+    gl.use_program(state->program);
+    if (state->mvp_matrix >= 0)
     {
-        gl->uniform_matrix_4fv(gl->mvp_matrix, 1, GL_FALSE,
-                               kUnitSquareProjection);
+        gl.uniform_matrix_4fv(state->mvp_matrix, 1, GL_FALSE,
+                              kUnitSquareProjection);
     }
-    if (gl->texture >= 0)
+    if (state->texture >= 0)
     {
-        gl->uniform_1i(gl->texture, 0);
+        gl.uniform_1i(state->texture, 0);
     }
-    if (gl->input_size >= 0)
+    if (state->input_size >= 0)
     {
-        gl->uniform_2f(gl->input_size, static_cast<GLfloat>(logical_width),
-                       static_cast<GLfloat>(logical_height));
+        gl.uniform_2f(state->input_size, static_cast<GLfloat>(logical_width),
+                      static_cast<GLfloat>(logical_height));
     }
-    if (gl->texture_size >= 0)
+    if (state->texture_size >= 0)
     {
-        gl->uniform_2f(gl->texture_size, static_cast<GLfloat>(logical_width),
-                       static_cast<GLfloat>(logical_height));
+        gl.uniform_2f(state->texture_size, static_cast<GLfloat>(logical_width),
+                      static_cast<GLfloat>(logical_height));
     }
-    if (gl->output_size >= 0)
+    if (state->output_size >= 0)
     {
-        gl->uniform_2f(gl->output_size, static_cast<GLfloat>(drawable_width),
-                       static_cast<GLfloat>(drawable_height));
+        gl.uniform_2f(state->output_size, static_cast<GLfloat>(width),
+                      static_cast<GLfloat>(height));
     }
-    if (gl->frame_count >= 0)
+    if (state->frame_count >= 0)
     {
-        gl->uniform_1i(gl->frame_count, static_cast<GLint>(gl->frames));
+        gl.uniform_1i(state->frame_count, static_cast<GLint>(state->frames));
     }
-    if (gl->frame_direction >= 0)
+    if (state->frame_direction >= 0)
     {
-        gl->uniform_1i(gl->frame_direction, 1);
+        gl.uniform_1i(state->frame_direction, 1);
     }
-    for (std::size_t index = 0; index < gl->parameters.size(); ++index)
+    for (std::size_t index = 0; index < state->parameters.size(); ++index)
     {
-        if (gl->parameter_locations[index] >= 0)
+        if (state->parameter_locations[index] >= 0)
         {
-            gl->uniform_1f(gl->parameter_locations[index],
-                           gl->parameters[index].value);
+            gl.uniform_1f(state->parameter_locations[index],
+                          state->parameters[index].value);
         }
     }
 
-    // A unit-square strip; texture row 0 is the bottom scanline, which is
-    // where glCopyTexSubImage2D put the frame's bottom row.
-    constexpr GLfloat kCorners[4][2] = {
-        {0.0F, 0.0F}, {1.0F, 0.0F}, {0.0F, 1.0F}, {1.0F, 1.0F}};
-    glBegin(GL_TRIANGLE_STRIP);
-    for (const auto& corner : kCorners)
-    {
-        glTexCoord4f(corner[0], corner[1], 0.0F, 1.0F);
-        gl->vertex_attrib_4f(kTexCoordSlot, corner[0], corner[1], 0.0F, 1.0F);
-        gl->vertex_attrib_4f(kColorSlot, 1.0F, 1.0F, 1.0F, 1.0F);
-        gl->vertex_attrib_4f(kVertexCoordSlot, corner[0], corner[1], 0.0F,
-                             1.0F);
-    }
-    glEnd();
-
-    gl->use_program(static_cast<GLuint>(previous_program));
-    glPopAttrib();
-    ++gl->frames;
+    // The unit square; texture row 0 is the bottom scanline.
+    state->quad.Draw();
+    ++state->frames;
 }
 
 }  // namespace repiu::engine

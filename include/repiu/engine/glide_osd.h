@@ -54,7 +54,10 @@ public:
 
     // Creates the ImGui context against an SDL window and its current GL
     // context. False leaves the OSD inert and `message` says why.
-    bool Initialize(void* sdl_window, void* gl_context, std::string* message);
+    // `glsl_version` is the context's version line for ImGui's OpenGL3
+    // backend (issue #69: GL 3.3 core natively, ES 3.0 on the web).
+    bool Initialize(void* sdl_window, void* gl_context,
+                    const char* glsl_version, std::string* message);
     void Shutdown();
     bool initialized() const { return initialized_; }
 

@@ -14,16 +14,6 @@
 
 namespace repiu::engine
 {
-namespace
-{
-
-// The launcher targets the same revision for the same reason: the backend
-// creates its context without requesting a version, and this GLSL level is
-// what compatibility contexts have offered since OpenGL 3.0.
-constexpr const char* kGlslVersion = "#version 130";
-
-}  // namespace
-
 GlideOsd::GlideOsd() = default;
 
 GlideOsd::~GlideOsd()
@@ -32,7 +22,7 @@ GlideOsd::~GlideOsd()
 }
 
 bool GlideOsd::Initialize(void* sdl_window, void* gl_context,
-                          std::string* message)
+                          const char* glsl_version, std::string* message)
 {
     if (initialized_)
     {
@@ -66,7 +56,7 @@ bool GlideOsd::Initialize(void* sdl_window, void* gl_context,
         }
         return false;
     }
-    if (!ImGui_ImplOpenGL3_Init(kGlslVersion))
+    if (!ImGui_ImplOpenGL3_Init(glsl_version))
     {
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();

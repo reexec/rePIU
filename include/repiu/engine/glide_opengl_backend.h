@@ -7,7 +7,9 @@
 #include "repiu/hle/glide_vertex.h"
 #include "repiu/engine/glide_buffer_swap_timing.h"
 #include "repiu/engine/glide_async_present.h"
+#include "repiu/engine/gl_api.h"
 #include "repiu/engine/glide_draw_batch.h"
+#include "repiu/engine/glide_framebuffer_pair.h"
 #include "repiu/engine/glide_gate_timing.h"
 #include "repiu/engine/glide_gl_error_policy.h"
 #include "repiu/engine/glide_letterbox.h"
@@ -17,6 +19,7 @@
 #include "repiu/engine/glide_swap_interval_policy.h"
 #include "repiu/engine/event_clock.h"
 #include "repiu/engine/glide_texture_census.h"
+#include "repiu/engine/glide_vertex_stream.h"
 #include "repiu/runtime/execution_backend.h"
 
 #include <atomic>
@@ -235,6 +238,8 @@ public:
 
     bool is_open() const { return window_ != nullptr || dummy_mode_; }
     bool is_dummy() const { return dummy_mode_; }
+    // Task 769: where the picture sits in the window, in drawable pixels.
+    const GlideLetterboxRect& content_rect() const { return content_rect_; }
 
     // Task 761: the LFB high-precision presentation toggle. Default on; the
     // initial value comes from REPIU_GLIDE_LFB_HIGH_PRECISION when the window
@@ -434,17 +439,20 @@ private:
                           float* inverse_width,
                           float* inverse_height);
     bool RefreshCurrentPalettizedTexture();
-    void EmitDrawVertex(const hle::GlideDrawVertex& vertex,
-                        bool sample_texture,
-                        float inverse_width,
-                        float inverse_height);
+    // Issue #69: what immediate mode received, written into the stream.
+    static GlideStreamVertex MakeStreamVertex(const hle::GlideDrawVertex& vertex,
+                                              bool sample_texture,
+                                              float inverse_width,
+                                              float inverse_height);
     bool ApplyWindowScale(std::uint32_t scale);
     void ApplyDrawableViewport();
     // Task 769: borderless fullscreen at the desktop resolution, toggled by
-    // Alt+Enter or a double click; and the black bars around the
-    // aspect-preserving content rect, cleared before every present.
+    // Alt+Enter or a double click.
     void ToggleFullscreen();
-    void ClearLetterboxBars();
+    // Issue #69: the orthographic projection glOrtho installed, for the
+    // shader: window pixels onto clip space, flipped for an upper-left origin.
+    void ApplyProjection();
+    void RestoreGameGlState();
     // Issue #45: the window's fullscreen state, and a change to it. `report`
     // is true for an operator's action, which the session sink stores;
     // applying the stored value at start is not reported. False when SDL
@@ -575,6 +583,29 @@ private:
     // upward and the projection matches OpenGL's default orientation.
     bool origin_lower_left_ = false;
     GlideOpenGlShader shader_;
+    // Issue #69: the GL 3.3 core / ES 3.0 subset the renderer draws with --
+    // the function table, the vertex stream that replaced immediate mode, and
+    // the offscreen front/back pair the game draws into.
+    GlApi gl_;
+    GlideVertexStream vertex_stream_;
+    GlideFramebufferPair framebuffers_;
+    std::vector<GlideStreamVertex> stream_vertices_;
+    // The pipeline state the game set through Glide, held here so a pass
+    // outside the game's pipeline (the LFB blit, the present) can put it back
+    // without asking GL: a query stalls a threaded driver until it catches
+    // up, and is a round trip in WebGL. The viewport and scissor box are
+    // always the whole offscreen buffer.
+    struct GameGlState
+    {
+        bool depth_test = false;
+        bool blend = false;
+        bool cull_face = false;
+        bool scissor_test = false;
+        bool color_mask[4] = {true, true, true, true};
+    };
+    GameGlState game_gl_state_;
+    float projection_[16] = {};
+    std::uint64_t front_render_buffer_selects_ = 0U;
     std::string message_;
     bool dummy_mode_ = false;
     std::unordered_map<std::uint32_t, TextureEntry> textures_;

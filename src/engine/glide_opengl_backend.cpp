@@ -1,6 +1,7 @@
 #include "repiu/engine/glide_opengl_backend.h"
 #include "repiu/engine/active_jamma_bindings.h"
 #include "repiu/engine/gl_renderer_identity.h"
+#include "repiu/engine/gl_shader_dialect.h"
 #include "repiu/engine/glide_letterbox.h"
 #include "repiu/engine/glide_osd.h"
 #include "repiu/engine/glide_post_process.h"
@@ -913,13 +914,18 @@ void GlideOpenGlBackend::ApplyDrawableViewport() {
   content_rect_ =
       ComputeGlidePictureRect(logical_width_, logical_height_,
                               drawable_width_, drawable_height_, keep_aspect_);
-  glViewport(static_cast<GLint>(content_rect_.x),
-             static_cast<GLint>(content_rect_.y),
-             static_cast<GLsizei>(content_rect_.width),
+  // Issue #69: the game draws into the offscreen pair, which is the picture
+  // rectangle's size, so its viewport starts at the origin; the rectangle's
+  // place in the window is the present's business.
+  std::string resize_message;
+  if (!framebuffers_.Resize(content_rect_.width, content_rect_.height,
+                            &resize_message) &&
+      !resize_message.empty()) {
+    fprintf(stderr, "[repiu-glide] %s\n", resize_message.c_str());
+  }
+  glViewport(0, 0, static_cast<GLsizei>(content_rect_.width),
              static_cast<GLsizei>(content_rect_.height));
-  glScissor(static_cast<GLint>(content_rect_.x),
-            static_cast<GLint>(content_rect_.y),
-            static_cast<GLsizei>(content_rect_.width),
+  glScissor(0, 0, static_cast<GLsizei>(content_rect_.width),
             static_cast<GLsizei>(content_rect_.height));
   GLfloat point_size_range[2] = {1.0F, 1.0F};
   glGetFloatv(GL_ALIASED_POINT_SIZE_RANGE, point_size_range);
@@ -995,34 +1001,65 @@ void GlideOpenGlBackend::ApplyPendingDisplayOptions() {
   }
 }
 
-void GlideOpenGlBackend::ClearLetterboxBars() {
-  const GlideLetterboxRect &rect = content_rect_;
-  if (rect.width == 0U || rect.height == 0U ||
-      (rect.width == drawable_width_ && rect.height == drawable_height_)) {
-    return;
-  }
-  // Up to four bars, as (x, y, width, height) in drawable pixels.
-  const std::uint32_t right = rect.x + rect.width;
-  const std::uint32_t top = rect.y + rect.height;
-  const std::uint32_t bars[4][4] = {
-      {0U, 0U, rect.x, drawable_height_},
-      {right, 0U, drawable_width_ - right, drawable_height_},
-      {rect.x, 0U, rect.width, rect.y},
-      {rect.x, top, rect.width, drawable_height_ - top},
-  };
-  glPushAttrib(GL_SCISSOR_BIT | GL_COLOR_BUFFER_BIT | GL_ENABLE_BIT);
-  glEnable(GL_SCISSOR_TEST);
-  glDrawBuffer(GL_BACK);
-  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-  glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
-  for (const auto &bar : bars) {
-    if (bar[2] != 0U && bar[3] != 0U) {
-      glScissor(static_cast<GLint>(bar[0]), static_cast<GLint>(bar[1]),
-                static_cast<GLsizei>(bar[2]), static_cast<GLsizei>(bar[3]));
-      glClear(GL_COLOR_BUFFER_BIT);
+void GlideOpenGlBackend::ApplyProjection() {
+  // Glide vertices arrive in screen pixel coordinates. Honor the origin
+  // grSstWinOpen actually asked for: GR_ORIGIN_UPPER_LEFT (0) needs a
+  // y-flipped projection, while GR_ORIGIN_LOWER_LEFT (1) matches OpenGL's
+  // default orientation. Hardcoding the flipped form renders the whole scene
+  // upside down for a lower-left guest. Culling is disabled by the game
+  // (grCullMode 0), so the resulting winding difference is harmless.
+  //
+  // Issue #69: the matrix glOrtho(0, w, bottom, top, -1, 1) built, column
+  // major, handed to the shader in place of the fixed-function stack.
+  const float width = static_cast<float>(logical_width_);
+  const float height = static_cast<float>(logical_height_);
+  const float bottom = origin_lower_left_ ? 0.0F : height;
+  const float top = origin_lower_left_ ? height : 0.0F;
+  const float matrix[16] = {2.0F / width,
+                            0.0F,
+                            0.0F,
+                            0.0F,
+                            0.0F,
+                            2.0F / (top - bottom),
+                            0.0F,
+                            0.0F,
+                            0.0F,
+                            0.0F,
+                            -1.0F,
+                            0.0F,
+                            -1.0F,
+                            -(top + bottom) / (top - bottom),
+                            0.0F,
+                            1.0F};
+  std::memcpy(projection_, matrix, sizeof(projection_));
+  shader_.SetProjection(projection_);
+}
+
+void GlideOpenGlBackend::RestoreGameGlState() {
+  const auto set = [](GLenum capability, bool enabled) {
+    if (enabled) {
+      glEnable(capability);
+    } else {
+      glDisable(capability);
     }
-  }
-  glPopAttrib();
+  };
+  framebuffers_.BindDrawTarget();
+  glViewport(0, 0, static_cast<GLsizei>(framebuffers_.width()),
+             static_cast<GLsizei>(framebuffers_.height()));
+  glScissor(0, 0, static_cast<GLsizei>(framebuffers_.width()),
+            static_cast<GLsizei>(framebuffers_.height()));
+  set(GL_DEPTH_TEST, game_gl_state_.depth_test);
+  set(GL_BLEND, game_gl_state_.blend);
+  set(GL_CULL_FACE, game_gl_state_.cull_face);
+  set(GL_SCISSOR_TEST, game_gl_state_.scissor_test);
+  const bool *const mask = game_gl_state_.color_mask;
+  glColorMask(mask[0] ? GL_TRUE : GL_FALSE, mask[1] ? GL_TRUE : GL_FALSE,
+              mask[2] ? GL_TRUE : GL_FALSE, mask[3] ? GL_TRUE : GL_FALSE);
+  shader_.Use();
+  gl_.active_texture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D,
+                current_texture_ != nullptr ? current_texture_->gl_name : 0U);
+  vertex_stream_.Bind();
 }
 
 std::string
@@ -1165,7 +1202,16 @@ bool GlideOpenGlBackend::OpenWindowed(std::uint32_t logical_width,
   SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
   SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
   SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
-  SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, auxiliary_buffer_count != 0U ? 24 : 0);
+  // Issue #69: the depth buffer belongs to the offscreen pair; the window's
+  // framebuffer only receives finished pictures.
+  SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
+  const repiu::platform::GlContextRequest context_request =
+      repiu::platform::RequestedGlContext();
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
+                      context_request.es ? SDL_GL_CONTEXT_PROFILE_ES
+                                         : SDL_GL_CONTEXT_PROFILE_CORE);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, context_request.major);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, context_request.minor);
   const std::string window_title = BuildWindowTitle(0.0);
   SDL_Window *window =
       SDL_CreateWindow(window_title.c_str(), window_width, window_height,
@@ -1200,6 +1246,21 @@ bool GlideOpenGlBackend::OpenWindowed(std::uint32_t logical_width,
     SDL_DestroyWindow(window);
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
     return true;
+  }
+  {
+    std::string missing;
+    if (!LoadGlApi(&gl_, &missing)) {
+      dummy_mode_ = true;
+      logical_width_ = logical_width;
+      logical_height_ = logical_height;
+      message_ = "Glide dummy fallback (OpenGL entry point missing: " +
+                 missing + ")";
+      SDL_GL_MakeCurrent(window, nullptr);
+      SDL_GL_DestroyContext(render_context);
+      SDL_DestroyWindow(window);
+      SDL_QuitSubSystem(SDL_INIT_VIDEO);
+      return true;
+    }
   }
   GlRendererIdentity renderer_identity;
   {
@@ -1255,7 +1316,8 @@ bool GlideOpenGlBackend::OpenWindowed(std::uint32_t logical_width,
   osd_ = std::make_unique<GlideOsd>();
   {
     std::string osd_message;
-    if (!osd_->Initialize(window, render_context, &osd_message)) {
+    if (!osd_->Initialize(window, render_context,
+                          ImGuiGlslVersion(gl_.es), &osd_message)) {
       fprintf(stderr, "[repiu-osd] disabled: %s\n", osd_message.c_str());
       osd_.reset();
     } else {
@@ -1368,37 +1430,55 @@ bool GlideOpenGlBackend::OpenWindowed(std::uint32_t logical_width,
   if (TryReadGlideGlErrorFrameInterval(&configured_interval)) {
     glide_gl_error_frame_interval_ = configured_interval;
   }
+  // Issue #69: the combine program, the vertex stream that replaced
+  // immediate mode, and the offscreen pair the game draws into. Any of them
+  // missing leaves nothing to draw with, so the window falls back to the
+  // dummy with the reason.
+  std::string renderer_failure;
   if (!shader_.Initialize()) {
-    fprintf(stderr, "[repiu-live-debug] Glide OpenWindowed failed to "
-                    "initialize shader, falling back to dummy mode\n");
+    renderer_failure = shader_.message();
+  } else if (!vertex_stream_.Initialize(&gl_)) {
+    renderer_failure = "vertex stream unavailable";
+  } else if (!framebuffers_.Initialize(&gl_, auxiliary_buffer_count != 0U,
+                                       &renderer_failure)) {
+    renderer_failure = "offscreen framebuffers: " + renderer_failure;
+  }
+  if (!renderer_failure.empty()) {
+    fprintf(stderr,
+            "[repiu-glide] renderer unavailable, falling back to dummy "
+            "mode: %s\n",
+            renderer_failure.c_str());
     Close();
     dummy_mode_ = true;
     logical_width_ = logical_width;
     logical_height_ = logical_height;
-    message_ = "Glide dummy fallback activated (no shader)";
+    message_ = "Glide dummy fallback activated (" + renderer_failure + ")";
     return true;
   }
-  ApplyDrawableViewport();
-  // Glide vertices arrive in screen pixel coordinates. Honor the origin
-  // grSstWinOpen actually asked for: GR_ORIGIN_UPPER_LEFT (0) needs a
-  // y-flipped projection, while GR_ORIGIN_LOWER_LEFT (1) matches OpenGL's
-  // default orientation. Hardcoding the flipped form renders the whole scene
-  // upside down for a lower-left guest. Culling is disabled by the game
-  // (grCullMode 0), so the resulting winding difference is harmless.
-  glMatrixMode(GL_PROJECTION);
-  glLoadIdentity();
-  if (origin_lower_left_) {
-    glOrtho(0.0, static_cast<double>(logical_width), 0.0,
-            static_cast<double>(logical_height), -1.0, 1.0);
-  } else {
-    glOrtho(0.0, static_cast<double>(logical_width),
-            static_cast<double>(logical_height), 0.0, -1.0, 1.0);
+  if (!gl_.es) {
+    // Desktop core takes the point size from gl_PointSize only when asked;
+    // ES always does.
+    glEnable(GL_PROGRAM_POINT_SIZE);
   }
-  glMatrixMode(GL_MODELVIEW);
-  glLoadIdentity();
+  ApplyDrawableViewport();
+  if (!framebuffers_.ready()) {
+    fprintf(stderr,
+            "[repiu-glide] renderer unavailable, falling back to dummy "
+            "mode: offscreen framebuffers could not be made\n");
+    Close();
+    dummy_mode_ = true;
+    logical_width_ = logical_width;
+    logical_height_ = logical_height;
+    message_ = "Glide dummy fallback activated (no offscreen framebuffers)";
+    return true;
+  }
+  ApplyProjection();
+  // The window starts black; the offscreen pair was cleared when it was made.
+  gl_.bind_framebuffer(GL_FRAMEBUFFER, 0U);
   glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  glClear(GL_COLOR_BUFFER_BIT);
   SDL_GL_SwapWindow(window);
+  framebuffers_.BindDrawTarget();
   // Issue #45: the stored fullscreen choice, entered after the window has
   // its scaled size so leaving fullscreen returns to that window. Applying
   // the stored value is not an operator's change, so nothing is reported.
@@ -1664,7 +1744,7 @@ bool GlideOpenGlBackend::BufferClear(std::uint32_t color, std::uint32_t alpha,
   const float a = static_cast<float>(alpha & 0xFF) / 255.0f;
   const float d = static_cast<float>(depth) / 65535.0f;
   glClearColor(r, g, b, a);
-  glClearDepth(d);
+  gl_.ClearDepth(d);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   message_ = "Glide buffer cleared";
   return true;
@@ -1799,6 +1879,31 @@ void GlideOpenGlBackend::LogLongFrame(
           us(present_begin - swap_last_return_), us(present_end - present_begin));
 }
 
+namespace {
+
+// Issue #69: the swap diagnostics' RGB samples, read from the back buffer as
+// RGBA, the one format ES guarantees, and packed down.
+std::vector<unsigned char> ReadBackBufferRgb(const GlideFramebufferPair &pair,
+                                             int width, int height) {
+  const std::size_t count = static_cast<std::size_t>(width) * height;
+  std::vector<unsigned char> rgba(count * 4U);
+  std::vector<unsigned char> rgb(count * 3U);
+  // A picture smaller than the logical screen (a tiny window) is not
+  // sampled: a clipped read would change the row stride.
+  if (static_cast<std::uint32_t>(width) > pair.width() ||
+      static_cast<std::uint32_t>(height) > pair.height() ||
+      !pair.ReadBack(0U, 0U, static_cast<std::uint32_t>(width),
+                     static_cast<std::uint32_t>(height), rgba.data())) {
+    return rgb;
+  }
+  for (std::size_t index = 0U; index < count; ++index) {
+    std::memcpy(rgb.data() + index * 3U, rgba.data() + index * 4U, 3U);
+  }
+  return rgb;
+}
+
+} // namespace
+
 bool GlideOpenGlBackend::BufferSwapOnHostThread(std::uint32_t swap_interval,
                                                 bool guest_gate_command) {
   if (!is_open()) {
@@ -1850,13 +1955,10 @@ bool GlideOpenGlBackend::BufferSwapOnHostThread(std::uint32_t swap_interval,
           elapsed_ms - elapsed_ms % scene_interval_ms + scene_interval_ms;
       const int width = static_cast<int>(logical_width_);
       const int height = static_cast<int>(logical_height_);
-      std::vector<unsigned char> pixels(static_cast<std::size_t>(width) *
-                                        height * 3U);
-      glReadBuffer(GL_BACK);
-      // Task 769: from the picture's corner, not the letterbox bar's.
-      glReadPixels(static_cast<GLint>(content_rect_.x),
-                   static_cast<GLint>(content_rect_.y), width, height, GL_RGB,
-                   GL_UNSIGNED_BYTE, pixels.data());
+      // Task 769: from the picture's corner, not the letterbox bar's --
+      // issue #69: the back buffer's origin.
+      const std::vector<unsigned char> pixels =
+          ReadBackBufferRgb(framebuffers_, width, height);
       std::uint64_t cell_luma[16] = {};
       std::uint64_t cell_count[16] = {};
       std::size_t non_black = 0;
@@ -1898,12 +2000,8 @@ bool GlideOpenGlBackend::BufferSwapOnHostThread(std::uint32_t swap_interval,
       swap_index <= 4000 && logical_width_ > 0 && logical_height_ > 0) {
     const int width = static_cast<int>(logical_width_);
     const int height = static_cast<int>(logical_height_);
-    std::vector<unsigned char> pixels(static_cast<std::size_t>(width) * height *
-                                      3U);
-    glReadBuffer(GL_BACK);
-    glReadPixels(static_cast<GLint>(content_rect_.x),
-                 static_cast<GLint>(content_rect_.y), width, height, GL_RGB,
-                 GL_UNSIGNED_BYTE, pixels.data());
+    const std::vector<unsigned char> pixels =
+        ReadBackBufferRgb(framebuffers_, width, height);
     std::size_t non_black = 0;
     std::uint64_t sum_r = 0;
     std::uint64_t sum_g = 0;
@@ -1925,21 +2023,17 @@ bool GlideOpenGlBackend::BufferSwapOnHostThread(std::uint32_t swap_interval,
             static_cast<unsigned long long>(sum_g / denom),
             static_cast<unsigned long long>(sum_b / denom));
   }
-  // Task 769: the bars around the aspect-preserving picture are black every
-  // frame, whatever the game cleared to and whatever the swap left behind.
-  ClearLetterboxBars();
-  // Task 768: the post-processing pass runs on the finished frame, after the
-  // diagnostics above have sampled it unprocessed and before the OSD, which
-  // must stay legible. With no shader selected it returns before any GL call.
-  if (post_process_ != nullptr && post_process_->active() &&
-      content_rect_.width > 0U && content_rect_.height > 0U) {
-    post_process_->Apply(content_rect_.x, content_rect_.y,
-                         content_rect_.width, content_rect_.height,
-                         logical_width_, logical_height_);
-  }
-  // Task 761: the OSD overlays the finished frame; ImGui's GL3 renderer saves
-  // and restores the GL state it touches, so the game's pipeline state
-  // survives.
+  // Issue #69: Glide's page flip. Back becomes front and is drawn into the
+  // window: the letterbox bars cleared black every frame (Task 769), the
+  // picture through the post-process shader when one is active (Task 768) --
+  // after the diagnostics above sampled it unprocessed and before the OSD,
+  // which must stay legible. The game's GL state is put back after the swap.
+  framebuffers_.Exchange();
+  framebuffers_.Present(drawable_width_, drawable_height_, content_rect_,
+                        post_process_.get(), logical_width_, logical_height_);
+  // Task 761: the OSD overlays the finished frame in the window's
+  // framebuffer; ImGui's GL3 renderer saves and restores the GL state it
+  // touches.
   if (osd_ != nullptr) {
     // Issue #45: the OSD shows the current display options and leaves a
     // change for the next event pump.
@@ -1959,6 +2053,7 @@ bool GlideOpenGlBackend::BufferSwapOnHostThread(std::uint32_t swap_interval,
   const auto present_begin = std::chrono::steady_clock::now();
   const bool swapped = SDL_GL_SwapWindow(static_cast<SDL_Window *>(window_));
   const auto present_end = std::chrono::steady_clock::now();
+  RestoreGameGlState();
   const std::uint64_t present_end_cycles =
       swap_timing != nullptr ? ReadGlideBufferSwapTimingCycles() : 0U;
   if (!swapped) {
@@ -2085,29 +2180,40 @@ bool GlideOpenGlBackend::PrepareDrawState(const std::uint32_t primitive,
   }
   shader_.SetTextureEnabled(*sample_texture);
   if (primitive == GL_POINTS) {
-    glPointSize(point_size_);
+    shader_.SetPointSize(point_size_);
   } else if (primitive == GL_LINES) {
     glLineWidth(1.0F);
   }
   return true;
 }
 
-void GlideOpenGlBackend::EmitDrawVertex(const hle::GlideDrawVertex &vertex,
-                                        const bool sample_texture,
-                                        const float inverse_width,
-                                        const float inverse_height) {
-  glColor4f(vertex.r, vertex.g, vertex.b, vertex.a);
+GlideStreamVertex GlideOpenGlBackend::MakeStreamVertex(
+    const hle::GlideDrawVertex &vertex, const bool sample_texture,
+    const float inverse_width, const float inverse_height) {
+  GlideStreamVertex out;
+  out.r = vertex.r;
+  out.g = vertex.g;
+  out.b = vertex.b;
+  out.a = vertex.a;
   if (sample_texture) {
     // Pack normalized sow/tow and the shared texture/fog oow. Because
     // orthographic clip w is constant, the shader receives linearly
     // interpolated numerators and reciprocal-w and performs the Glide
     // perspective divide per fragment.
-    glTexCoord4f(vertex.s * inverse_width, vertex.t * inverse_height,
-                 vertex.fog_oow, vertex.texture_oow);
+    out.s = vertex.s * inverse_width;
+    out.t = vertex.t * inverse_height;
+    out.fog_oow = vertex.fog_oow;
+    out.texture_oow = vertex.texture_oow;
   } else {
-    glTexCoord4f(0.0F, 0.0F, vertex.fog_oow, 1.0F);
+    out.s = 0.0F;
+    out.t = 0.0F;
+    out.fog_oow = vertex.fog_oow;
+    out.texture_oow = 1.0F;
   }
-  glVertex3f(vertex.x, vertex.y, GlideOozToOrthoEyeZ(vertex.ooz));
+  out.x = vertex.x;
+  out.y = vertex.y;
+  out.z = GlideOozToOrthoEyeZ(vertex.ooz);
+  return out;
 }
 
 bool GlideOpenGlBackend::DrawPrimitive(
@@ -2126,11 +2232,16 @@ bool GlideOpenGlBackend::DrawPrimitive(
   if (!PrepareDrawState(primitive, &sample_texture, &inv_w, &inv_h)) {
     return false;
   }
-  glBegin(static_cast<GLenum>(primitive));
+  stream_vertices_.clear();
   for (std::size_t index = 0U; index < vertex_count; ++index) {
-    EmitDrawVertex(*vertices[index], sample_texture, inv_w, inv_h);
+    stream_vertices_.push_back(
+        MakeStreamVertex(*vertices[index], sample_texture, inv_w, inv_h));
   }
-  glEnd();
+  if (!vertex_stream_.Draw(static_cast<GLenum>(primitive),
+                           stream_vertices_.data(), stream_vertices_.size())) {
+    message_ = "Glide primitive did not fit the vertex stream";
+    return false;
+  }
   message_ = success_message;
   return true;
 }
@@ -2168,14 +2279,19 @@ bool GlideOpenGlBackend::DrawPrimitiveBatch(
   if (!PrepareDrawState(gl_primitive, &sample_texture, &inv_w, &inv_h)) {
     return false;
   }
-  // The whole batch shares one state application and one `glBegin`/`glEnd`,
-  // which is exactly what makes it cheaper than the same primitives drawn
-  // separately. The vertices themselves are emitted identically.
-  glBegin(static_cast<GLenum>(gl_primitive));
+  // The whole batch shares one state application and one draw call, which is
+  // exactly what makes it cheaper than the same primitives drawn separately.
+  // The vertices themselves are emitted identically.
+  stream_vertices_.clear();
   for (std::size_t index = 0U; index < vertex_count; ++index) {
-    EmitDrawVertex(vertices[index], sample_texture, inv_w, inv_h);
+    stream_vertices_.push_back(
+        MakeStreamVertex(vertices[index], sample_texture, inv_w, inv_h));
   }
-  glEnd();
+  if (!vertex_stream_.Draw(static_cast<GLenum>(gl_primitive),
+                           stream_vertices_.data(), stream_vertices_.size())) {
+    message_ = "Glide primitive batch did not fit the vertex stream";
+    return false;
+  }
   message_ = "Glide primitive batch drawn";
   return true;
 }
@@ -2559,8 +2675,6 @@ bool GlideOpenGlBackend::PresentLfbSurface(const std::uint8_t *rgba8,
     return false;
   }
 
-  GLint previous_texture = 0;
-  glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture);
   if (lfb_texture_ == 0U) {
     GLuint name = 0;
     glGenTextures(1, &name);
@@ -2569,31 +2683,25 @@ bool GlideOpenGlBackend::PresentLfbSurface(const std::uint8_t *rgba8,
   glBindTexture(GL_TEXTURE_2D, lfb_texture_);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(width),
                static_cast<GLsizei>(height), 0, GL_RGBA, GL_UNSIGNED_BYTE,
                rgba8);
 
   // The blit must not inherit the geometry state (depth compare, blending,
   // culling, combine routing) the game set for its triangles, so force the
-  // pieces that matter and restore them afterwards.
-  const GLboolean depth_was_enabled = glIsEnabled(GL_DEPTH_TEST);
-  const GLboolean blend_was_enabled = glIsEnabled(GL_BLEND);
-  const GLboolean cull_was_enabled = glIsEnabled(GL_CULL_FACE);
-  const GLboolean alpha_test_was_enabled = glIsEnabled(GL_ALPHA_TEST);
-  const GLboolean scissor_was_enabled = glIsEnabled(GL_SCISSOR_TEST);
-  GLboolean color_mask[4]{};
-  glGetBooleanv(GL_COLOR_WRITEMASK, color_mask);
-  GLint draw_buffer = GL_BACK;
-  glGetIntegerv(GL_DRAW_BUFFER, &draw_buffer);
+  // pieces that matter and restore them afterwards. It always lands in the
+  // back buffer. The alpha test is the shader's, which blit mode bypasses.
   glDisable(GL_DEPTH_TEST);
   glDisable(GL_BLEND);
   glDisable(GL_CULL_FACE);
-  glDisable(GL_ALPHA_TEST);
   glDisable(GL_SCISSOR_TEST);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-  glDrawBuffer(GL_BACK);
+  const bool drawing_to_front = framebuffers_.draw_target_front();
+  if (drawing_to_front) {
+    framebuffers_.SetDrawTargetFront(false);
+  }
   shader_.SetBlitMode(true);
 
   // The orthographic projection installed at OpenWindowed already maps screen
@@ -2608,21 +2716,21 @@ bool GlideOpenGlBackend::PresentLfbSurface(const std::uint8_t *rgba8,
   const float bottom_v = invert_v ? 0.0F : 1.0F;
   const float right = static_cast<float>(logical_width_);
   const float bottom = static_cast<float>(logical_height_);
-  glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
-  glBegin(GL_TRIANGLES);
-  glTexCoord4f(0.0F, top_v, 0.0F, 1.0F);
-  glVertex3f(0.0F, 0.0F, 0.0F);
-  glTexCoord4f(1.0F, top_v, 0.0F, 1.0F);
-  glVertex3f(right, 0.0F, 0.0F);
-  glTexCoord4f(1.0F, bottom_v, 0.0F, 1.0F);
-  glVertex3f(right, bottom, 0.0F);
-  glTexCoord4f(0.0F, top_v, 0.0F, 1.0F);
-  glVertex3f(0.0F, 0.0F, 0.0F);
-  glTexCoord4f(1.0F, bottom_v, 0.0F, 1.0F);
-  glVertex3f(right, bottom, 0.0F);
-  glTexCoord4f(0.0F, bottom_v, 0.0F, 1.0F);
-  glVertex3f(0.0F, bottom, 0.0F);
-  glEnd();
+  const auto corner = [](float x, float y, float v, float u) {
+    GlideStreamVertex vertex;
+    vertex.x = x;
+    vertex.y = y;
+    vertex.s = u;
+    vertex.t = v;
+    vertex.fog_oow = 0.0F;
+    vertex.texture_oow = 1.0F;
+    return vertex;
+  };
+  const GlideStreamVertex quad[6] = {
+      corner(0.0F, 0.0F, top_v, 0.0F),     corner(right, 0.0F, top_v, 1.0F),
+      corner(right, bottom, bottom_v, 1.0F), corner(0.0F, 0.0F, top_v, 0.0F),
+      corner(right, bottom, bottom_v, 1.0F), corner(0.0F, bottom, bottom_v, 0.0F)};
+  vertex_stream_.Draw(GL_TRIANGLES, quad, 6U);
 
   static std::atomic<long> lfb_diagnostic_count{0};
   const long diagnostic_index = lfb_diagnostic_count.fetch_add(1) + 1;
@@ -2651,17 +2759,14 @@ bool GlideOpenGlBackend::PresentLfbSurface(const std::uint8_t *rgba8,
     GLint viewport[4]{};
     GLint current_program = 0;
     GLint current_texture = 0;
-    GLfloat projection[16]{};
     glGetIntegerv(GL_VIEWPORT, viewport);
     glGetIntegerv(GL_CURRENT_PROGRAM, &current_program);
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &current_texture);
-    glGetFloatv(GL_PROJECTION_MATRIX, projection);
+    const float *const projection = projection_;
     const std::size_t sample_width = static_cast<std::size_t>(viewport[2]);
     const std::size_t sample_height = static_cast<std::size_t>(viewport[3]);
-    std::vector<std::uint8_t> pixels(sample_width * sample_height * 3U);
-    glReadBuffer(GL_BACK);
-    glReadPixels(viewport[0], viewport[1], viewport[2], viewport[3], GL_RGB,
-                 GL_UNSIGNED_BYTE, pixels.data());
+    const std::vector<std::uint8_t> pixels =
+        ReadBackBufferRgb(framebuffers_, viewport[2], viewport[3]);
     std::size_t output_non_black = 0U;
     std::size_t output_non_zero = 0U;
     std::uint8_t output_maximum = 0U;
@@ -2692,24 +2797,15 @@ bool GlideOpenGlBackend::PresentLfbSurface(const std::uint8_t *rgba8,
 
   shader_.SetBlitMode(false);
   shader_.SetTextureEnabled(texture_combine_enabled_);
-  glDrawBuffer(static_cast<GLenum>(draw_buffer));
-  glColorMask(color_mask[0], color_mask[1], color_mask[2], color_mask[3]);
-  if (depth_was_enabled)
-    glEnable(GL_DEPTH_TEST);
-  if (blend_was_enabled)
-    glEnable(GL_BLEND);
-  if (cull_was_enabled)
-    glEnable(GL_CULL_FACE);
-  if (alpha_test_was_enabled)
-    glEnable(GL_ALPHA_TEST);
-  if (scissor_was_enabled)
-    glEnable(GL_SCISSOR_TEST);
+  if (drawing_to_front) {
+    framebuffers_.SetDrawTargetFront(true);
+  }
+  RestoreGameGlState();
 
   if (present_to_front) {
     BufferSwap(0);
   }
 
-  glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture));
   message_ = "Glide LFB surface presented";
   return glGetError() == GL_NO_ERROR;
 }
@@ -2733,24 +2829,18 @@ bool GlideOpenGlBackend::ReadbackFramebuffer(std::uint32_t width,
     message_ = "Glide framebuffer read back (dummy)";
     return true;
   }
-  // Task 769: only the picture's rectangle, never the letterbox bars, so what
-  // the guest reads back does not depend on the window's shape. In a window
-  // of the guest's own ratio the rectangle is the whole drawable.
-  int origin_x = 0;
-  int origin_y = 0;
-  int drawable_width = static_cast<int>(width);
-  int drawable_height = static_cast<int>(height);
-  if (content_rect_.width > 0U && content_rect_.height > 0U) {
-    origin_x = static_cast<int>(content_rect_.x);
-    origin_y = static_cast<int>(content_rect_.y);
-    drawable_width = static_cast<int>(content_rect_.width);
-    drawable_height = static_cast<int>(content_rect_.height);
-  }
+  // Task 769: only the picture, never the letterbox bars, so what the guest
+  // reads back does not depend on the window's shape. Issue #69: the picture
+  // is the whole back buffer of the offscreen pair.
+  const int drawable_width = static_cast<int>(framebuffers_.width());
+  const int drawable_height = static_cast<int>(framebuffers_.height());
   std::vector<std::uint8_t> drawable_rgba(
       static_cast<std::size_t>(drawable_width) * drawable_height * 4U);
-  glReadBuffer(GL_BACK);
-  glReadPixels(origin_x, origin_y, drawable_width, drawable_height, GL_RGBA,
-               GL_UNSIGNED_BYTE, drawable_rgba.data());
+  if (!framebuffers_.ReadBack(0U, 0U, framebuffers_.width(),
+                              framebuffers_.height(), drawable_rgba.data())) {
+    message_ = "cannot read back Glide framebuffer";
+    return false;
+  }
   // glReadPixels returns row 0 as the bottom scanline, while every consumer
   // here treats row 0 as the top. Sample the complete scaled picture and
   // return the logical Glide dimensions with nearest-neighbor filtering.
@@ -2789,6 +2879,10 @@ bool GlideOpenGlBackend::SetColorMask(bool rgb, bool alpha) {
     message_ = "Glide color mask dummy-applied";
     return true;
   }
+  game_gl_state_.color_mask[0] = rgb;
+  game_gl_state_.color_mask[1] = rgb;
+  game_gl_state_.color_mask[2] = rgb;
+  game_gl_state_.color_mask[3] = alpha;
   glColorMask(rgb ? GL_TRUE : GL_FALSE, rgb ? GL_TRUE : GL_FALSE,
               rgb ? GL_TRUE : GL_FALSE, alpha ? GL_TRUE : GL_FALSE);
   message_ = "Glide color mask applied to OpenGL";
@@ -2815,7 +2909,15 @@ bool GlideOpenGlBackend::SetRenderBuffer(std::uint32_t buffer) {
                    : "Glide front buffer selected (dummy)";
     return true;
   }
-  glDrawBuffer(buffer == kGlideBackBuffer ? GL_BACK : GL_FRONT);
+  // Issue #69: the draw target is one of the offscreen pair. What is drawn
+  // to front shows at the next present rather than at once; the game keeps
+  // its target on back (design 729), so the first front selection is noted.
+  if (buffer == kGlideFrontBuffer && front_render_buffer_selects_++ == 0U) {
+    fprintf(stderr,
+            "[repiu-glide] front render buffer selected: drawn offscreen, "
+            "shown at the next swap\n");
+  }
+  framebuffers_.SetDrawTargetFront(buffer == kGlideFrontBuffer);
   message_ = buffer == kGlideBackBuffer ? "Glide back buffer selected"
                                         : "Glide front buffer selected";
   return CheckGlErrorIfEnabled();
@@ -2880,6 +2982,7 @@ bool GlideOpenGlBackend::SetDepthBufferMode(std::uint32_t mode) {
                                      : "Glide depth buffer disabled (dummy)";
     return true;
   }
+  game_gl_state_.depth_test = mode == kGlideZBuffer;
   if (mode == kGlideZBuffer) {
     glEnable(GL_DEPTH_TEST);
     message_ = "Glide Z-buffer mode enabled";
@@ -3034,6 +3137,7 @@ bool GlideOpenGlBackend::SetAlphaBlend(const hle::GlideAlphaBlendState &state) {
   }
   const std::uint64_t phase_apply_start =
       phase ? ReadGlideGateTimingCycles() : 0U;
+  game_gl_state_.blend = !opaque;
   if (opaque) {
     glDisable(GL_BLEND);
   } else {
@@ -3069,15 +3173,11 @@ bool GlideOpenGlBackend::SetAlphaTestFunction(std::uint32_t function) {
     message_ = "Glide alpha test applied (dummy)";
     return true;
   }
-  if (function == 7U) // GR_CMP_ALWAYS
-  {
-    glDisable(GL_ALPHA_TEST);
-    message_ = "Glide ALWAYS alpha test disabled in OpenGL";
-  } else {
-    glEnable(GL_ALPHA_TEST);
-    glAlphaFunc(GL_NEVER + function, alpha_test_reference_);
-    message_ = "Glide alpha test enabled in OpenGL";
-  }
+  // Issue #69: the shader compares the final alpha (glAlphaFunc is gone from
+  // core and ES); GR_CMP_ALWAYS (7) passes everything.
+  shader_.SetAlphaTest(function, alpha_test_reference_);
+  message_ = function == 7U ? "Glide ALWAYS alpha test disabled in GLSL"
+                            : "Glide alpha test enabled in GLSL";
   return CheckGlErrorIfEnabled();
 }
 
@@ -3097,9 +3197,7 @@ bool GlideOpenGlBackend::SetAlphaTestReferenceValue(
   if (dummy_mode_) {
     return true;
   }
-  if (alpha_test_function_ != 7U) {
-    glAlphaFunc(GL_NEVER + alpha_test_function_, alpha_test_reference_);
-  }
+  shader_.SetAlphaTest(alpha_test_function_, alpha_test_reference_);
   return CheckGlErrorIfEnabled();
 }
 
@@ -3140,7 +3238,6 @@ bool GlideOpenGlBackend::SetFogMode(std::uint32_t mode) {
                           : "Glide table fog enabled (dummy)";
     return true;
   }
-  glDisable(GL_FOG);
   const bool applied = shader_.SetFogMode(mode);
   message_ = applied ? (mode == 0U ? "Glide fog disabled in GLSL"
                                    : "Glide table fog enabled in GLSL")
@@ -3209,6 +3306,7 @@ bool GlideOpenGlBackend::SetClipWindow(std::uint32_t min_x, std::uint32_t min_y,
     return true;
   }
   ApplyDrawableViewport();
+  game_gl_state_.scissor_test = true;
   glEnable(GL_SCISSOR_TEST);
   message_ = "full Glide clip window applied to OpenGL";
   return CheckGlErrorIfEnabled();
@@ -3230,6 +3328,7 @@ bool GlideOpenGlBackend::SetCullMode(std::uint32_t mode) {
     message_ = "Glide cull mode applied (dummy)";
     return true;
   }
+  game_gl_state_.cull_face = face != GlideOpenGlCullFace::kDisabled;
   if (face == GlideOpenGlCullFace::kDisabled) {
     glDisable(GL_CULL_FACE);
   } else {
@@ -3336,6 +3435,8 @@ void GlideOpenGlBackend::Close() {
         glDeleteTextures(1, &lfb_name);
       }
       shader_.Shutdown();
+      vertex_stream_.Shutdown();
+      framebuffers_.Shutdown();
       SDL_GL_MakeCurrent(window, nullptr);
       SDL_GL_DestroyContext(render_context);
     }
@@ -3372,6 +3473,10 @@ void GlideOpenGlBackend::Close() {
   palette_generation_ = 0U;
   texture_combine_enabled_ = false;
   lfb_texture_ = 0;
+  gl_ = GlApi{};
+  game_gl_state_ = GameGlState{};
+  stream_vertices_.clear();
+  front_render_buffer_selects_ = 0U;
 }
 
 } // namespace repiu::engine

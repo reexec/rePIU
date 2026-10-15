@@ -1,53 +1,21 @@
 #include "repiu/engine/glide_opengl_shader.h"
 
+#include "repiu/engine/gl_shader_dialect.h"
+#include "repiu/engine/gl_unit_quad.h"
 #include "repiu/engine/glide_gl_error_policy.h"
 
-#include <SDL3/SDL.h>
+#include "repiu/engine/gl_api.h"
+
 #include <SDL3/SDL_opengl.h>
 
-#include <sstream>
+#include <string>
 
 namespace repiu::engine
 {
 
 struct GlideOpenGlShader::Implementation
 {
-    using CreateShader = GLuint(APIENTRY*)(GLenum);
-    using ShaderSource = void(APIENTRY*)(GLuint, GLsizei, const char* const*,
-                                         const GLint*);
-    using CompileShader = void(APIENTRY*)(GLuint);
-    using GetShaderiv = void(APIENTRY*)(GLuint, GLenum, GLint*);
-    using GetShaderInfoLog = void(APIENTRY*)(GLuint, GLsizei, GLsizei*, char*);
-    using DeleteShader = void(APIENTRY*)(GLuint);
-    using CreateProgram = GLuint(APIENTRY*)();
-    using AttachShader = void(APIENTRY*)(GLuint, GLuint);
-    using LinkProgram = void(APIENTRY*)(GLuint);
-    using GetProgramiv = void(APIENTRY*)(GLuint, GLenum, GLint*);
-    using GetProgramInfoLog = void(APIENTRY*)(GLuint, GLsizei, GLsizei*, char*);
-    using DeleteProgram = void(APIENTRY*)(GLuint);
-    using UseProgram = void(APIENTRY*)(GLuint);
-    using GetUniformLocation = GLint(APIENTRY*)(GLuint, const char*);
-    using Uniform1i = void(APIENTRY*)(GLint, GLint);
-    using Uniform1fv = void(APIENTRY*)(GLint, GLsizei, const GLfloat*);
-    using Uniform4f = void(APIENTRY*)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
-
-    CreateShader create_shader = nullptr;
-    ShaderSource shader_source = nullptr;
-    CompileShader compile_shader = nullptr;
-    GetShaderiv get_shader_iv = nullptr;
-    GetShaderInfoLog get_shader_info_log = nullptr;
-    DeleteShader delete_shader = nullptr;
-    CreateProgram create_program = nullptr;
-    AttachShader attach_shader = nullptr;
-    LinkProgram link_program = nullptr;
-    GetProgramiv get_program_iv = nullptr;
-    GetProgramInfoLog get_program_info_log = nullptr;
-    DeleteProgram delete_program = nullptr;
-    UseProgram use_program = nullptr;
-    GetUniformLocation get_uniform_location = nullptr;
-    Uniform1i uniform_1i = nullptr;
-    Uniform1fv uniform_1fv = nullptr;
-    Uniform4f uniform_4f = nullptr;
+    GlApi gl;
     GLuint program = 0;
     GLint alpha_function = -1;
     GLint alpha_factor = -1;
@@ -66,88 +34,12 @@ struct GlideOpenGlShader::Implementation
     GLint fog_mode = -1;
     GLint fog_color = -1;
     GLint fog_table = -1;
+    GLint projection = -1;
+    GLint point_size = -1;
+    GLint alpha_test_function = -1;
+    GLint alpha_test_reference = -1;
 };
 
-namespace
-{
-
-constexpr GLenum kGlVertexShader = 0x8B31;
-constexpr GLenum kGlFragmentShader = 0x8B30;
-constexpr GLenum kGlCompileStatus = 0x8B81;
-constexpr GLenum kGlLinkStatus = 0x8B82;
-
-// Task 505: `SDL_FunctionPointer` rather than `void*`, for the reason the
-// backend's copy of this function records -- it is what SDL3 returns, MSVC
-// converts silently, GCC refuses, and C++ does not guarantee a function pointer
-// fits in an object pointer. The failure test is unaffected.
-template <typename Function>
-bool ResolveOpenGlFunction(const char* name, Function* function)
-{
-    SDL_FunctionPointer address = SDL_GL_GetProcAddress(name);
-    const auto value = reinterpret_cast<std::uintptr_t>(address);
-    if (address == nullptr || value <= 3U || value == ~std::uintptr_t{0})
-    {
-        return false;
-    }
-    *function = reinterpret_cast<Function>(address);
-    return true;
-}
-
-bool ResolveFunctions(GlideOpenGlShader::Implementation* implementation)
-{
-    return ResolveOpenGlFunction("glCreateShader",
-                                 &implementation->create_shader) &&
-        ResolveOpenGlFunction("glShaderSource",
-                              &implementation->shader_source) &&
-        ResolveOpenGlFunction("glCompileShader",
-                              &implementation->compile_shader) &&
-        ResolveOpenGlFunction("glGetShaderiv",
-                              &implementation->get_shader_iv) &&
-        ResolveOpenGlFunction("glGetShaderInfoLog",
-                              &implementation->get_shader_info_log) &&
-        ResolveOpenGlFunction("glDeleteShader",
-                              &implementation->delete_shader) &&
-        ResolveOpenGlFunction("glCreateProgram",
-                              &implementation->create_program) &&
-        ResolveOpenGlFunction("glAttachShader",
-                              &implementation->attach_shader) &&
-        ResolveOpenGlFunction("glLinkProgram", &implementation->link_program) &&
-        ResolveOpenGlFunction("glGetProgramiv",
-                              &implementation->get_program_iv) &&
-        ResolveOpenGlFunction("glGetProgramInfoLog",
-                              &implementation->get_program_info_log) &&
-        ResolveOpenGlFunction("glDeleteProgram",
-                              &implementation->delete_program) &&
-        ResolveOpenGlFunction("glUseProgram", &implementation->use_program) &&
-        ResolveOpenGlFunction("glGetUniformLocation",
-                              &implementation->get_uniform_location) &&
-        ResolveOpenGlFunction("glUniform1i", &implementation->uniform_1i) &&
-        ResolveOpenGlFunction("glUniform1fv", &implementation->uniform_1fv) &&
-        ResolveOpenGlFunction("glUniform4f", &implementation->uniform_4f);
-}
-
-GLuint CompileShader(GlideOpenGlShader::Implementation* implementation,
-                     GLenum type,
-                     const char* source,
-                     std::string* message)
-{
-    const GLuint shader = implementation->create_shader(type);
-    implementation->shader_source(shader, 1, &source, nullptr);
-    implementation->compile_shader(shader);
-    GLint compiled = GL_FALSE;
-    implementation->get_shader_iv(shader, kGlCompileStatus, &compiled);
-    if (compiled == GL_TRUE)
-    {
-        return shader;
-    }
-    char log[1024]{};
-    implementation->get_shader_info_log(shader, sizeof(log), nullptr, log);
-    *message = std::string("failed to compile Glide GLSL shader: ") + log;
-    implementation->delete_shader(shader);
-    return 0;
-}
-
-}  // namespace
 
 GlideOpenGlShader::GlideOpenGlShader() = default;
 
@@ -160,23 +52,32 @@ bool GlideOpenGlShader::Initialize()
 {
     Shutdown();
     implementation_ = std::make_unique<Implementation>();
-    if (!ResolveFunctions(implementation_.get()))
+    std::string missing;
+    if (!LoadGlApi(&implementation_->gl, &missing))
     {
-        message_ = "required OpenGL shader entry points are unavailable";
+        message_ = "required OpenGL entry point is unavailable: " + missing;
         implementation_.reset();
         return false;
     }
-    constexpr char kVertexSource[] =
-        "#version 110\n"
-        "varying vec4 repiuIteratedColor;\n"
-        "varying vec4 repiuTextureFogCoord;\n"
+    // Issue #69: attributes in the shared vertex layout's slots and a uniform
+    // projection replace ftransform(), gl_Color and gl_MultiTexCoord0, and the
+    // alpha test (glAlphaFunc, absent from core and ES) compares the final
+    // alpha here. The combine and fog expressions are unchanged.
+    constexpr char kVertexBody[] =
+        "in vec3 repiuPosition;\n"
+        "in vec4 repiuColor;\n"
+        "in vec4 repiuTexCoord;\n"
+        "uniform mat4 repiuProjection;\n"
+        "uniform float repiuPointSize;\n"
+        "out vec4 repiuIteratedColor;\n"
+        "out vec4 repiuTextureFogCoord;\n"
         "void main() {\n"
-        "  gl_Position = ftransform();\n"
-        "  repiuIteratedColor = gl_Color;\n"
-        "  repiuTextureFogCoord = gl_MultiTexCoord0;\n"
+        "  gl_Position = repiuProjection * vec4(repiuPosition, 1.0);\n"
+        "  gl_PointSize = repiuPointSize;\n"
+        "  repiuIteratedColor = repiuColor;\n"
+        "  repiuTextureFogCoord = repiuTexCoord;\n"
         "}\n";
-    constexpr char kFragmentSource[] =
-        "#version 110\n"
+    constexpr char kFragmentBody[] =
         "uniform int repiuAlphaFunction;\n"
         "uniform int repiuAlphaFactor;\n"
         "uniform int repiuAlphaLocal;\n"
@@ -194,8 +95,11 @@ bool GlideOpenGlShader::Initialize()
         "uniform int repiuFogMode;\n"
         "uniform vec4 repiuFogColor;\n"
         "uniform float repiuFogTable[64];\n"
-        "varying vec4 repiuIteratedColor;\n"
-        "varying vec4 repiuTextureFogCoord;\n"
+        "uniform int repiuAlphaTestFunction;\n"
+        "uniform float repiuAlphaTestReference;\n"
+        "in vec4 repiuIteratedColor;\n"
+        "in vec4 repiuTextureFogCoord;\n"
+        "out vec4 repiuFragColor;\n"
         "float repiuFogFactor(float oow) {\n"
         "  if (oow <= 0.0) return 0.0;\n"
         "  float w = 1.0 / oow;\n"
@@ -213,10 +117,21 @@ bool GlideOpenGlShader::Initialize()
         "  float fraction = clamp((normalized - lower) / (upper - lower), 0.0, 1.0);\n"
         "  return mix(repiuFogTable[index], repiuFogTable[index + 1], fraction);\n"
         "}\n"
+        "bool repiuAlphaTestPasses(float alpha) {\n"
+        "  float reference = repiuAlphaTestReference;\n"
+        "  if (repiuAlphaTestFunction == 0) return false;\n"
+        "  if (repiuAlphaTestFunction == 1) return alpha < reference;\n"
+        "  if (repiuAlphaTestFunction == 2) return alpha == reference;\n"
+        "  if (repiuAlphaTestFunction == 3) return alpha <= reference;\n"
+        "  if (repiuAlphaTestFunction == 4) return alpha > reference;\n"
+        "  if (repiuAlphaTestFunction == 5) return alpha != reference;\n"
+        "  if (repiuAlphaTestFunction == 6) return alpha >= reference;\n"
+        "  return true;\n"
+        "}\n"
         "void main() {\n"
         "  vec2 uv = repiuTextureFogCoord.xy / max(repiuTextureFogCoord.w, 0.00000000000000000001);\n"
-        "  if (repiuBlitMode != 0) { gl_FragColor = texture2D(repiuTexture, uv); return; }\n"
-        "  vec4 tex = repiuTextureEnable != 0 ? texture2D(repiuTexture, uv) : vec4(1.0);\n"
+        "  if (repiuBlitMode != 0) { repiuFragColor = texture(repiuTexture, uv); return; }\n"
+        "  vec4 tex = repiuTextureEnable != 0 ? texture(repiuTexture, uv) : vec4(1.0);\n"
         "  float a_loc = (repiuAlphaLocal == 0) ? repiuIteratedColor.a : ((repiuAlphaLocal == 1) ? repiuConstantColor.a : 0.0);\n"
         "  float a_oth = (repiuAlphaOther == 0) ? repiuIteratedColor.a : ((repiuAlphaOther == 1) ? tex.a : ((repiuAlphaOther == 2) ? repiuConstantColor.a : 0.0));\n"
         "  float a_fac = (repiuAlphaFactor == 0) ? 0.0 : ((repiuAlphaFactor == 1) ? a_loc : ((repiuAlphaFactor == 2) ? a_oth : ((repiuAlphaFactor == 8) ? 1.0 : 0.0)));\n"
@@ -238,97 +153,84 @@ bool GlideOpenGlShader::Initialize()
         "  else if (repiuColorFunction == 7) color = (c_oth - c_loc) * c_fac + c_loc;\n"
         "  if (repiuColorInvert != 0) color = vec3(1.0) - color;\n"
         "  if (repiuFogMode == 2) color = mix(color, repiuFogColor.rgb, clamp(repiuFogFactor(repiuTextureFogCoord.z), 0.0, 1.0));\n"
-        "  gl_FragColor = vec4(color, alpha);\n"
+        "  if (!repiuAlphaTestPasses(clamp(alpha, 0.0, 1.0))) discard;\n"
+        "  repiuFragColor = vec4(color, alpha);\n"
         "}\n";
-    const GLuint vertex = CompileShader(implementation_.get(),
-                                        kGlVertexShader,
-                                        kVertexSource,
-                                        &message_);
-    if (vertex == 0)
+    const std::string header = GlslHeader(implementation_->gl.es);
+    const std::string vertex_source = header + kVertexBody;
+    const std::string fragment_source = header + kFragmentBody;
+    implementation_->program = BuildGlProgram(
+        implementation_->gl, vertex_source.c_str(), fragment_source.c_str(),
+        "repiuPosition", "repiuColor", "repiuTexCoord", &message_);
+    if (implementation_->program == 0U)
     {
+        message_ = "Glide GLSL program: " + message_;
         implementation_.reset();
-        return false;
-    }
-    const GLuint fragment = CompileShader(implementation_.get(),
-                                          kGlFragmentShader,
-                                          kFragmentSource,
-                                          &message_);
-    if (fragment == 0)
-    {
-        implementation_->delete_shader(vertex);
-        implementation_.reset();
-        return false;
-    }
-    implementation_->program = implementation_->create_program();
-    implementation_->attach_shader(implementation_->program, vertex);
-    implementation_->attach_shader(implementation_->program, fragment);
-    implementation_->link_program(implementation_->program);
-    implementation_->delete_shader(vertex);
-    implementation_->delete_shader(fragment);
-    GLint linked = GL_FALSE;
-    implementation_->get_program_iv(implementation_->program,
-                                    kGlLinkStatus,
-                                    &linked);
-    if (linked != GL_TRUE)
-    {
-        char log[1024]{};
-        implementation_->get_program_info_log(implementation_->program,
-                                              sizeof(log), nullptr, log);
-        message_ = std::string("failed to link Glide GLSL program: ") + log;
-        Shutdown();
         return false;
     }
     implementation_->alpha_function =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuAlphaFunction");
     implementation_->alpha_factor =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuAlphaFactor");
     implementation_->alpha_local =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuAlphaLocal");
     implementation_->alpha_other =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuAlphaOther");
     implementation_->alpha_invert =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuAlphaInvert");
     implementation_->color_function =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuColorFunction");
     implementation_->color_factor =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuColorFactor");
     implementation_->color_local =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuColorLocal");
     implementation_->color_other =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuColorOther");
     implementation_->color_invert =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuColorInvert");
     implementation_->texture_enable =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuTextureEnable");
     implementation_->texture_sampler =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuTexture");
     implementation_->blit_mode =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuBlitMode");
     implementation_->constant_color =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuConstantColor");
     implementation_->fog_mode =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuFogMode");
     implementation_->fog_color =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuFogColor");
     implementation_->fog_table =
-        implementation_->get_uniform_location(implementation_->program,
+        implementation_->gl.get_uniform_location(implementation_->program,
                                               "repiuFogTable");
+    implementation_->projection =
+        implementation_->gl.get_uniform_location(implementation_->program,
+                                                 "repiuProjection");
+    implementation_->point_size =
+        implementation_->gl.get_uniform_location(implementation_->program,
+                                                 "repiuPointSize");
+    implementation_->alpha_test_function =
+        implementation_->gl.get_uniform_location(implementation_->program,
+                                                 "repiuAlphaTestFunction");
+    implementation_->alpha_test_reference =
+        implementation_->gl.get_uniform_location(implementation_->program,
+                                                 "repiuAlphaTestReference");
     if (implementation_->alpha_function < 0 ||
         implementation_->alpha_factor < 0 ||
         implementation_->alpha_local < 0 ||
@@ -345,38 +247,47 @@ bool GlideOpenGlShader::Initialize()
         implementation_->constant_color < 0 ||
         implementation_->fog_mode < 0 ||
         implementation_->fog_color < 0 ||
-        implementation_->fog_table < 0)
+        implementation_->fog_table < 0 ||
+        implementation_->projection < 0 ||
+        implementation_->point_size < 0 ||
+        implementation_->alpha_test_function < 0 ||
+        implementation_->alpha_test_reference < 0)
     {
         message_ = "Glide GLSL alpha-combine uniforms are unavailable";
         Shutdown();
         return false;
     }
-    implementation_->use_program(implementation_->program);
+    implementation_->gl.use_program(implementation_->program);
     // Seed the combine functions to LOCAL (1) so a draw that precedes the game's
     // grColorCombine/grAlphaCombine setup (or a retained unsupported equation)
     // emits the iterated vertex color rather than a black fragment. The game's
     // observed init combine (1,0,0,2,0) later confirms this same value.
-    implementation_->uniform_1i(implementation_->color_function, 1);
-    implementation_->uniform_1i(implementation_->color_factor, 0);
-    implementation_->uniform_1i(implementation_->color_local, 0);
-    implementation_->uniform_1i(implementation_->color_other, 2);
-    implementation_->uniform_1i(implementation_->color_invert, 0);
-    implementation_->uniform_1i(implementation_->alpha_function, 1);
-    implementation_->uniform_1i(implementation_->alpha_factor, 0);
-    implementation_->uniform_1i(implementation_->alpha_local, 0);
-    implementation_->uniform_1i(implementation_->alpha_other, 2);
-    implementation_->uniform_1i(implementation_->alpha_invert, 0);
+    implementation_->gl.uniform_1i(implementation_->color_function, 1);
+    implementation_->gl.uniform_1i(implementation_->color_factor, 0);
+    implementation_->gl.uniform_1i(implementation_->color_local, 0);
+    implementation_->gl.uniform_1i(implementation_->color_other, 2);
+    implementation_->gl.uniform_1i(implementation_->color_invert, 0);
+    implementation_->gl.uniform_1i(implementation_->alpha_function, 1);
+    implementation_->gl.uniform_1i(implementation_->alpha_factor, 0);
+    implementation_->gl.uniform_1i(implementation_->alpha_local, 0);
+    implementation_->gl.uniform_1i(implementation_->alpha_other, 2);
+    implementation_->gl.uniform_1i(implementation_->alpha_invert, 0);
     // Texture sampling starts disabled and binds to texture unit 0 (R3).
-    implementation_->uniform_1i(implementation_->texture_enable, 0);
-    implementation_->uniform_1i(implementation_->texture_sampler, 0);
-    implementation_->uniform_1i(implementation_->blit_mode, 0);
-    implementation_->uniform_1i(implementation_->fog_mode, 0);
-    implementation_->uniform_4f(implementation_->constant_color,
+    implementation_->gl.uniform_1i(implementation_->texture_enable, 0);
+    implementation_->gl.uniform_1i(implementation_->texture_sampler, 0);
+    implementation_->gl.uniform_1i(implementation_->blit_mode, 0);
+    implementation_->gl.uniform_1i(implementation_->fog_mode, 0);
+    implementation_->gl.uniform_1f(implementation_->point_size, 1.0F);
+    // GR_CMP_ALWAYS until the game sets an alpha test.
+    implementation_->gl.uniform_1i(implementation_->alpha_test_function, 7);
+    implementation_->gl.uniform_1f(implementation_->alpha_test_reference,
+                                   0.0F);
+    implementation_->gl.uniform_4f(implementation_->constant_color,
                                 1.0F, 1.0F, 1.0F, 1.0F);
-    implementation_->uniform_4f(implementation_->fog_color,
+    implementation_->gl.uniform_4f(implementation_->fog_color,
                                 0.0F, 0.0F, 0.0F, 1.0F);
     GLfloat empty_fog_table[hle::kGlideFogTableEntryCount]{};
-    implementation_->uniform_1fv(implementation_->fog_table,
+    implementation_->gl.uniform_1fv(implementation_->fog_table,
                                  hle::kGlideFogTableEntryCount,
                                  empty_fog_table);
     message_ = "Glide GLSL combine program initialized";
@@ -390,8 +301,8 @@ void GlideOpenGlShader::SetTextureEnabled(bool enabled)
     {
         return;
     }
-    implementation_->use_program(implementation_->program);
-    implementation_->uniform_1i(implementation_->texture_enable,
+    implementation_->gl.use_program(implementation_->program);
+    implementation_->gl.uniform_1i(implementation_->texture_enable,
                                 enabled ? 1 : 0);
 }
 
@@ -402,8 +313,8 @@ void GlideOpenGlShader::SetBlitMode(bool enabled)
     {
         return;
     }
-    implementation_->use_program(implementation_->program);
-    implementation_->uniform_1i(implementation_->blit_mode,
+    implementation_->gl.use_program(implementation_->program);
+    implementation_->gl.uniform_1i(implementation_->blit_mode,
                                 enabled ? 1 : 0);
 }
 
@@ -414,8 +325,8 @@ bool GlideOpenGlShader::SetFogMode(std::uint32_t mode)
     {
         return false;
     }
-    implementation_->use_program(implementation_->program);
-    implementation_->uniform_1i(implementation_->fog_mode,
+    implementation_->gl.use_program(implementation_->program);
+    implementation_->gl.uniform_1i(implementation_->fog_mode,
                                 static_cast<GLint>(mode));
     return !GlideGlErrorCheckPolicyEnabled() || glGetError() == GL_NO_ERROR;
 }
@@ -431,15 +342,19 @@ bool GlideOpenGlShader::SetFogColor(std::uint32_t argb)
     const float r = static_cast<float>((argb >> 16) & 0xFF) / 255.0F;
     const float g = static_cast<float>((argb >> 8) & 0xFF) / 255.0F;
     const float b = static_cast<float>(argb & 0xFF) / 255.0F;
-    implementation_->use_program(implementation_->program);
-    implementation_->uniform_4f(implementation_->fog_color, r, g, b, a);
+    implementation_->gl.use_program(implementation_->program);
+    implementation_->gl.uniform_4f(implementation_->fog_color, r, g, b, a);
     return !GlideGlErrorCheckPolicyEnabled() || glGetError() == GL_NO_ERROR;
 }
 
 bool GlideOpenGlShader::SetFogTable(const hle::GlideFogTable& table)
 {
     if (!implementation_ || implementation_->program == 0 ||
-        implementation_->fog_table < 0)
+        implementation_->fog_table < 0 ||
+        implementation_->projection < 0 ||
+        implementation_->point_size < 0 ||
+        implementation_->alpha_test_function < 0 ||
+        implementation_->alpha_test_reference < 0)
     {
         return false;
     }
@@ -448,8 +363,8 @@ bool GlideOpenGlShader::SetFogTable(const hle::GlideFogTable& table)
     {
         normalized[index] = static_cast<GLfloat>(table[index]) / 255.0F;
     }
-    implementation_->use_program(implementation_->program);
-    implementation_->uniform_1fv(
+    implementation_->gl.use_program(implementation_->program);
+    implementation_->gl.uniform_1fv(
         implementation_->fog_table,
         static_cast<GLsizei>(hle::kGlideFogTableEntryCount), normalized);
     return !GlideGlErrorCheckPolicyEnabled() || glGetError() == GL_NO_ERROR;
@@ -463,16 +378,16 @@ bool GlideOpenGlShader::SetAlphaCombine(
         message_ = "unsupported Glide alpha-combine equation";
         return false;
     }
-    implementation_->use_program(implementation_->program);
-    implementation_->uniform_1i(implementation_->alpha_function,
+    implementation_->gl.use_program(implementation_->program);
+    implementation_->gl.uniform_1i(implementation_->alpha_function,
                                 static_cast<GLint>(state.function));
-    implementation_->uniform_1i(implementation_->alpha_factor,
+    implementation_->gl.uniform_1i(implementation_->alpha_factor,
                                 static_cast<GLint>(state.factor));
-    implementation_->uniform_1i(implementation_->alpha_local,
+    implementation_->gl.uniform_1i(implementation_->alpha_local,
                                 static_cast<GLint>(state.local));
-    implementation_->uniform_1i(implementation_->alpha_other,
+    implementation_->gl.uniform_1i(implementation_->alpha_other,
                                 static_cast<GLint>(state.other));
-    implementation_->uniform_1i(implementation_->alpha_invert,
+    implementation_->gl.uniform_1i(implementation_->alpha_invert,
                                 state.invert ? 1 : 0);
     if (GlideGlErrorCheckPolicyEnabled() && glGetError() != GL_NO_ERROR)
     {
@@ -491,16 +406,16 @@ bool GlideOpenGlShader::SetColorCombine(
         message_ = "unsupported Glide color-combine equation";
         return false;
     }
-    implementation_->use_program(implementation_->program);
-    implementation_->uniform_1i(implementation_->color_function,
+    implementation_->gl.use_program(implementation_->program);
+    implementation_->gl.uniform_1i(implementation_->color_function,
                                 static_cast<GLint>(state.function));
-    implementation_->uniform_1i(implementation_->color_factor,
+    implementation_->gl.uniform_1i(implementation_->color_factor,
                                 static_cast<GLint>(state.factor));
-    implementation_->uniform_1i(implementation_->color_local,
+    implementation_->gl.uniform_1i(implementation_->color_local,
                                 static_cast<GLint>(state.local));
-    implementation_->uniform_1i(implementation_->color_other,
+    implementation_->gl.uniform_1i(implementation_->color_other,
                                 static_cast<GLint>(state.other));
-    implementation_->uniform_1i(implementation_->color_invert,
+    implementation_->gl.uniform_1i(implementation_->color_invert,
                                 state.invert ? 1 : 0);
     if (GlideGlErrorCheckPolicyEnabled() && glGetError() != GL_NO_ERROR)
     {
@@ -518,22 +433,64 @@ bool GlideOpenGlShader::SetConstantColor(std::uint32_t argb)
     {
         return false;
     }
-    implementation_->use_program(implementation_->program);
+    implementation_->gl.use_program(implementation_->program);
     const float a = static_cast<float>((argb >> 24) & 0xFF) / 255.0F;
     const float r = static_cast<float>((argb >> 16) & 0xFF) / 255.0F;
     const float g = static_cast<float>((argb >> 8) & 0xFF) / 255.0F;
     const float b = static_cast<float>(argb & 0xFF) / 255.0F;
-    implementation_->uniform_4f(implementation_->constant_color, r, g, b, a);
+    implementation_->gl.uniform_4f(implementation_->constant_color, r, g, b, a);
     return true;
+}
+
+void GlideOpenGlShader::SetProjection(const float matrix[16])
+{
+    if (!implementation_ || implementation_->program == 0)
+    {
+        return;
+    }
+    implementation_->gl.use_program(implementation_->program);
+    implementation_->gl.uniform_matrix_4fv(implementation_->projection, 1,
+                                           GL_FALSE, matrix);
+}
+
+void GlideOpenGlShader::SetPointSize(float size)
+{
+    if (!implementation_ || implementation_->program == 0)
+    {
+        return;
+    }
+    implementation_->gl.use_program(implementation_->program);
+    implementation_->gl.uniform_1f(implementation_->point_size, size);
+}
+
+void GlideOpenGlShader::SetAlphaTest(std::uint32_t function, float reference)
+{
+    if (!implementation_ || implementation_->program == 0)
+    {
+        return;
+    }
+    implementation_->gl.use_program(implementation_->program);
+    implementation_->gl.uniform_1i(implementation_->alpha_test_function,
+                                   static_cast<GLint>(function));
+    implementation_->gl.uniform_1f(implementation_->alpha_test_reference,
+                                   reference);
+}
+
+void GlideOpenGlShader::Use()
+{
+    if (implementation_ && implementation_->program != 0)
+    {
+        implementation_->gl.use_program(implementation_->program);
+    }
 }
 
 void GlideOpenGlShader::Shutdown()
 {
     if (implementation_ && implementation_->program != 0 &&
-        implementation_->delete_program != nullptr)
+        implementation_->gl.delete_program != nullptr)
     {
-        implementation_->use_program(0);
-        implementation_->delete_program(implementation_->program);
+        implementation_->gl.use_program(0);
+        implementation_->gl.delete_program(implementation_->program);
     }
     implementation_.reset();
 }

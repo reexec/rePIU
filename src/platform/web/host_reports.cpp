@@ -61,6 +61,12 @@ bool SelectWslD3d12Driver()
     return false;
 }
 
+// Issue #69: WebGL2 is OpenGL ES 3.0.
+GlContextRequest RequestedGlContext()
+{
+    return GlContextRequest{true, 3, 0};
+}
+
 bool ResolveHostModule(std::uint32_t /*address*/,
                        std::string* /*module_name*/,
                        std::uint32_t* /*module_offset*/)

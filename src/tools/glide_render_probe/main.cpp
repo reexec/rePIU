@@ -2,6 +2,7 @@
 #include "repiu/hle/glide_lfb.h"
 #include "repiu/hle/glide_vertex.h"
 #if defined(_WIN32)
+#include "repiu/engine/gl_api.h"
 #include "repiu/engine/glide_letterbox.h"
 #include "repiu/engine/glide_opengl_backend.h"
 #include "repiu/engine/glide_post_process.h"
@@ -42,11 +43,12 @@ float TableWorldDistance(std::uint32_t index)
 }
 
 #if defined(_WIN32)
-// Task 768: the post-processing pass in a real context. A white frame goes
+// Task 768: the post-processing pass in a real context. A white picture goes
 // through the scanline shader at full strength and must come back with dark
 // and bright rows; the crt shader must draw and leave the curved-off corner
-// black; a missing shader must leave no pass; and the Glide state the pass
-// touches must be restored.
+// black; a missing shader must leave no pass; and the Glide state a swap's
+// present touches must be restored. Issue #69: the pass reads a texture (the
+// front buffer's, in the backend) and draws into the window's framebuffer.
 bool RunOpenGlPostShaderProbe()
 {
     constexpr std::uint32_t kWidth = 64U;
@@ -72,12 +74,46 @@ bool RunOpenGlPostShaderProbe()
     }
     const auto width = static_cast<std::uint32_t>(drawable_width);
     const auto height = static_cast<std::uint32_t>(drawable_height);
-    const auto read_red = [width, height]() {
+    repiu::engine::GlApi gl;
+    std::string missing;
+    if (!Check(repiu::engine::LoadGlApi(&gl, &missing),
+               "GL entry points unavailable"))
+    {
+        std::cerr << missing << '\n';
+        return false;
+    }
+    // The picture the pass reads: a white texture the drawable's size, like
+    // the front buffer of a white frame.
+    GLuint white_texture = 0;
+    glGenTextures(1, &white_texture);
+    glBindTexture(GL_TEXTURE_2D, white_texture);
+    {
+        std::vector<std::uint8_t> pixels(width * height * 4U, 255U);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(width),
+                     static_cast<GLsizei>(height), 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, pixels.data());
+    }
+    const auto apply = [&](repiu::engine::GlidePostProcess& pass) {
+        repiu::engine::GlStateSnapshot state;
+        state.Capture();
+        gl.bind_framebuffer(GL_FRAMEBUFFER, 0U);
+        glDisable(GL_SCISSOR_TEST);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
+        glClear(GL_COLOR_BUFFER_BIT);
+        pass.Apply(white_texture, 0U, 0U, width, height, kWidth, kHeight);
+        state.Restore(gl);
+    };
+    const auto read_red = [&gl, width, height]() {
         std::vector<std::uint8_t> pixels(width * height * 4U);
-        glReadBuffer(GL_BACK);
+        GLint previous = 0;
+        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
+        gl.bind_framebuffer(GL_READ_FRAMEBUFFER, 0U);
         glReadPixels(0, 0, static_cast<GLsizei>(width),
                      static_cast<GLsizei>(height), GL_RGBA, GL_UNSIGNED_BYTE,
                      pixels.data());
+        gl.bind_framebuffer(GL_READ_FRAMEBUFFER,
+                            static_cast<GLuint>(previous));
         std::vector<std::uint8_t> red(width * height);
         for (std::size_t index = 0; index < red.size(); ++index)
         {
@@ -115,21 +151,35 @@ bool RunOpenGlPostShaderProbe()
     {
         return false;
     }
-    glEnable(GL_BLEND);
+    // A swap presents through the window's framebuffer and must hand the
+    // game back the state it set through Glide and its (new) back buffer.
+    repiu::hle::GlideAlphaBlendState translucent;
+    translucent.rgb_source = 1U;
+    translucent.rgb_destination = 5U;
+    translucent.alpha_source = 4U;
+    translucent.alpha_destination = 0U;
+    translucent.valid = true;
+    backend.SetAlphaBlend(translucent);
     GLint viewport_before[4]{};
     glGetIntegerv(GL_VIEWPORT, viewport_before);
     GLint program_before = 0;
-    glGetIntegerv(0x8B8D, &program_before);
-    post.Apply(0U, 0U, width, height, kWidth, kHeight);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &program_before);
+    const bool swapped = backend.BufferSwap(0U);
     GLint viewport_after[4]{};
     glGetIntegerv(GL_VIEWPORT, viewport_after);
     GLint program_after = 0;
-    glGetIntegerv(0x8B8D, &program_after);
-    const bool state_restored = glIsEnabled(GL_BLEND) == GL_TRUE &&
+    glGetIntegerv(GL_CURRENT_PROGRAM, &program_after);
+    GLint framebuffer_after = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &framebuffer_after);
+    const bool state_restored = swapped && glIsEnabled(GL_BLEND) == GL_TRUE &&
         std::memcmp(viewport_before, viewport_after,
                     sizeof(viewport_before)) == 0 &&
-        program_before == program_after && glGetError() == GL_NO_ERROR;
-    glDisable(GL_BLEND);
+        program_before == program_after && framebuffer_after != 0 &&
+        glGetError() == GL_NO_ERROR;
+    translucent.rgb_source = 4U;
+    translucent.rgb_destination = 0U;
+    backend.SetAlphaBlend(translucent);
+    apply(post);
 
     const std::vector<std::uint8_t> scanline = read_red();
     std::size_t bright_rows = 0;
@@ -144,12 +194,10 @@ bool RunOpenGlPostShaderProbe()
         bright_rows >= height / 3U && dark_rows >= height / 3U;
 
     bool crt_ok = post.Select("crt") && post.active() &&
-        post.parameters().size() == 6U &&
-        backend.PresentLfbSurface(white.data(), kWidth, kHeight, false,
-                                  false);
+        post.parameters().size() == 6U;
     if (crt_ok)
     {
-        post.Apply(0U, 0U, width, height, kWidth, kHeight);
+        apply(post);
         const std::vector<std::uint8_t> crt = read_red();
         std::uint32_t lit = 0;
         for (std::uint32_t y = height / 4U; y < height * 3U / 4U; ++y)
@@ -179,15 +227,14 @@ bool RunOpenGlPostShaderProbe()
             repiu::engine::ComputeGlideLetterboxRect(
                 kWidth, kHeight, static_cast<std::uint32_t>(wide_width),
                 static_cast<std::uint32_t>(wide_height));
+        const repiu::engine::GlideLetterboxRect& rect = backend.content_rect();
         GLint viewport[4]{};
         glGetIntegerv(GL_VIEWPORT, viewport);
-        glDisable(GL_SCISSOR_TEST);
-        glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
-        glClear(GL_COLOR_BUFFER_BIT);
         std::vector<std::uint8_t> picture;
-        letterbox_ok = expected.x > 0U &&
-            viewport[0] == static_cast<GLint>(expected.x) &&
-            viewport[1] == static_cast<GLint>(expected.y) &&
+        letterbox_ok = expected.x > 0U && rect.x == expected.x &&
+            rect.y == expected.y && rect.width == expected.width &&
+            rect.height == expected.height && viewport[0] == 0 &&
+            viewport[1] == 0 &&
             viewport[2] == static_cast<GLint>(expected.width) &&
             viewport[3] == static_cast<GLint>(expected.height) &&
             backend.PresentLfbSurface(white.data(), kWidth, kHeight, false,
@@ -198,8 +245,8 @@ bool RunOpenGlPostShaderProbe()
         {
             letterbox_ok = picture[index] == 255U;
         }
-        std::cout << "post_shader_gl_letterbox_viewport=" << viewport[0] << ","
-                  << viewport[1] << "," << viewport[2] << "," << viewport[3]
+        std::cout << "post_shader_gl_letterbox_rect=" << rect.x << ","
+                  << rect.y << "," << rect.width << "," << rect.height
                   << " drawable=" << wide_width << "x" << wide_height << '\n';
     }
 
@@ -225,8 +272,7 @@ bool RunOpenGlPostShaderProbe()
         backend.PumpEvents();
         int full_width = 0;
         int full_height = 0;
-        GLint viewport[4]{};
-        glGetIntegerv(GL_VIEWPORT, viewport);
+        const repiu::engine::GlideLetterboxRect rect = backend.content_rect();
         const bool entered =
             (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0U &&
             SDL_GetWindowSizeInPixels(window, &full_width, &full_height);
@@ -252,20 +298,19 @@ bool RunOpenGlPostShaderProbe()
         const bool left =
             (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) == 0U;
         fullscreen_ok = entered && mode_kept && left &&
-            viewport[0] == static_cast<GLint>(expected.x) &&
-            viewport[1] == static_cast<GLint>(expected.y) &&
-            viewport[2] == static_cast<GLint>(expected.width) &&
-            viewport[3] == static_cast<GLint>(expected.height);
+            rect.x == expected.x && rect.y == expected.y &&
+            rect.width == expected.width && rect.height == expected.height;
         std::cout << "glide_fullscreen_entered/mode-kept/left="
                   << entered << "/" << mode_kept << "/" << left
                   << " fullscreen=" << full_width << "x" << full_height
-                  << " viewport=" << viewport[0] << "," << viewport[1] << ","
-                  << viewport[2] << "," << viewport[3] << '\n';
+                  << " rect=" << rect.x << "," << rect.y << "," << rect.width
+                  << "," << rect.height << '\n';
     }
     std::cout << "glide_fullscreen_toggle=" << (fullscreen_ok ? "true" : "false")
               << '\n';
 
     post.Shutdown();
+    glDeleteTextures(1, &white_texture);
     backend.Close();
 
     std::cout << "post_shader_gl_state_restored="
@@ -277,7 +322,7 @@ bool RunOpenGlPostShaderProbe()
               << "\npost_shader_gl_none=" << (none_ok ? "true" : "false")
               << "\nglide_letterbox_gl=" << (letterbox_ok ? "true" : "false")
               << '\n';
-    return Check(state_restored, "post-process left GL state changed") &&
+    return Check(state_restored, "a swap left the game's GL state changed") &&
         Check(scanlines_ok, "scanline rows did not alternate") &&
         Check(crt_ok, "crt shader did not draw as expected") &&
         Check(none_ok, "none did not clear the pass") &&

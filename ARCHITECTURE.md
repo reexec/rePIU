@@ -237,6 +237,26 @@ flowchart LR
 
 투영(`glOrtho`), 점 크기, 알파 테스트(`glAlphaFunc`)는 결합 shader의 uniform과 `discard`입니다. 게임은 offscreen pair에만 그리고, `grBufferSwap`은 둘을 교환한 뒤 새 front를 창에 그립니다. 그래서 swap 뒤 back은 직전 front이고(Task 729가 기대는 page flip), WebGL이 표시 뒤 창 framebuffer를 지우거나 그리던 중인 프레임을 내보내도 게임 그림에 영향이 없습니다. 표시·LFB blit 뒤에는 backend가 쥔 게임 상태(`GameGlState`)로 되돌리며 GL에 묻지 않습니다(GL 조회는 스레드 드라이버를 멈춰 측정에서 프레임 처리량을 절반으로 떨어뜨렸습니다).
 
+### 창 경계와 브라우저 페이지 (issue #72)
+
+백엔드는 창·GL 문맥·스왑·크기·전체 화면·제목·스왑 간격을 `GlideHostWindow`(`include/repiu/engine/glide_host_window.h`)로
+다룹니다. 구현은 SDL 창(`glide_host_window_sdl.cpp`, Win32·Linux·Node)과 브라우저 캔버스(`glide_host_window_browser.cpp`)이고,
+플랫폼의 `BrowserCanvasAvailable()`(`include/repiu/platform/browser_host.h`)로 실행 중에 고릅니다. 브라우저 구현은 페이지가 Worker에
+넘긴 OffscreenCanvas에 WebGL2 문맥을 만들고, GL 함수를 Emscripten으로 찾으며(`SetGlProcAddressLoader`), 스왑할 일이 없습니다.
+단일 스레드 루프는 호스트 차례에서 화면 교체가 있었거나 16 ms가 지나면 `YieldToHostEventLoop()`로 페이지에 양보합니다
+(브라우저 링크 타깃 `repiu_browser`만 Asyncify, [설계](docs/design/20261016-i072-browser-page.md)).
+
+### The window boundary and the browser page (issue #72)
+
+The backend handles the window, GL context, swap, size, fullscreen, title and swap interval through `GlideHostWindow`
+(`include/repiu/engine/glide_host_window.h`). Its implementations are an SDL window (`glide_host_window_sdl.cpp`; Win32,
+Linux, Node) and a browser canvas (`glide_host_window_browser.cpp`), chosen at run time by the platform's
+`BrowserCanvasAvailable()` (`include/repiu/platform/browser_host.h`). The browser implementation makes a WebGL2 context on
+the OffscreenCanvas the page handed the Worker, finds GL functions through Emscripten (`SetGlProcAddressLoader`) and has
+nothing to swap. At the host turn the single-threaded loop yields to the page through `YieldToHostEventLoop()` once a
+picture was swapped or 16 ms have passed (only the browser link target `repiu_browser` uses Asyncify,
+[design](docs/design/20261016-i072-browser-page.md)).
+
 ### GL 3.3 core / ES 3.0 subset (issue #69)
 
 The renderer uses only the subset OpenGL 3.3 core and OpenGL ES 3.0 (WebGL2) share. Native builds (Win32, Linux) ask for a 3.3 core context and the web for ES 3.0; what to ask for is the platform's `RequestedGlContext()` (`include/repiu/platform/host_gpu_driver.h`). The GLSL header (`#version 330 core` / `#version 300 es`) is picked by the context that was made, so the engine holds no platform branch ([design](docs/design/20261016-i069-gles3-renderer.md)).

@@ -10,14 +10,25 @@ namespace repiu::engine
 namespace
 {
 
+GlProcAddressLoader g_loader = nullptr;
+
+GlFunction LookUp(const char* name)
+{
+    if (g_loader != nullptr)
+    {
+        return g_loader(name);
+    }
+    return reinterpret_cast<GlFunction>(SDL_GL_GetProcAddress(name));
+}
+
 // A GL loader reports failure as 0, 1, 2, 3 or -1 rather than only null (the
 // `wglGetProcAddress` convention SDL inherits on Windows). The address is held
-// as `SDL_FunctionPointer`, what SDL3 returns, because C++ does not guarantee
-// that a function pointer fits in an object pointer (Task 505).
+// as a function pointer (SDL3 returns `SDL_FunctionPointer`) because C++ does
+// not guarantee that a function pointer fits in an object pointer (Task 505).
 template <typename Function>
 bool Resolve(const char* name, Function* function)
 {
-    SDL_FunctionPointer address = SDL_GL_GetProcAddress(name);
+    const GlFunction address = LookUp(name);
     const auto value = reinterpret_cast<std::uintptr_t>(address);
     if (address == nullptr || value <= 3U || value == ~std::uintptr_t{0})
     {
@@ -29,6 +40,11 @@ bool Resolve(const char* name, Function* function)
 }
 
 }  // namespace
+
+void SetGlProcAddressLoader(GlProcAddressLoader loader)
+{
+    g_loader = loader;
+}
 
 void GlApi::ClearDepth(float depth) const
 {

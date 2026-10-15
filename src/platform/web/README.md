@@ -22,6 +22,22 @@
 | `host_reports.cpp` | **"없음" (issue #67)** — 크래시 보고, 폴트 보고의 호스트 정보, 모듈·심볼 이름, 프로세스 간 텔레메트리. 진단만 잃습니다. 렌더러가 요청할 GL 문맥은 ES 3.0(WebGL2)입니다(issue #69; 고정 기능 GL stub `legacy_gl_stubs.cpp`는 렌더러가 GLES 3 부분집합으로 옮겨 지워졌습니다) |
 | `host_process.cpp` | **stub** — 브라우저에 자식 프로세스가 없습니다 |
 
+## 브라우저 페이지 (issue #72)
+
+`browser_host.cpp`는 브라우저 페이지가 Worker의 엔진에 주는 두 가지를 맡습니다: 그릴 캔버스(OffscreenCanvas 위의 WebGL2 문맥,
+GL 함수 조회)와 돌아갈 이벤트 고리(Asyncify로 한 번 양보). worker.js가 `Module.repiuCanvas`와 `Module.repiuYield`를 줄 때만
+동작하고, Node에서는 모두 "없음"입니다. Win32·Linux는 `src/platform/browser_host_none.cpp`입니다.
+
+페이지 파일은 `page/`(`index.html`, `main.js`, `worker.js`)이고, 링크 타깃 `repiu_browser`가 빌드 디렉터리에 복사합니다:
+
+```bash
+./scripts/build_web_wasm.sh --build-dir ~/repiu-web --target repiu_browser
+cd ~/repiu-web && python3 -m http.server 8000     # http://localhost:8000/ 에서 ZIP과 CHD를 고름
+```
+
+`node_pre.js`는 `window`가 없는 곳(Node, Worker)에서 SDL 비디오를 dummy로, 오디오를 없음으로 둡니다
+([설계 #72](../../../docs/design/20261016-i072-browser-page.md)).
+
 ## 여기 없는 것 — `host_environment`, `worker_signal`, `host_trace_descriptor`
 
 이들은 웹 사본을 만들지 않고 `src/platform/linux/`의 것을 **그대로 씁니다**(`host_trace_descriptor`는
@@ -76,6 +92,24 @@ That is why the virtual memory went from a stub to an implementation
 | `host_cpu_entry_state.cpp` | **real (issue #67)** — the selector and FPU values a WOW64 thread sees, a stand-in TEB page, a fixed CPUID table |
 | `host_reports.cpp` | **"none" (issue #67)** — the crash reporter, the fault report's host details, module and symbol names, cross-process telemetry; only diagnostics are lost. The GL context the renderer asks for is ES 3.0 (WebGL2) (issue #69; the fixed-function GL stubs, `legacy_gl_stubs.cpp`, went when the renderer moved to the GLES 3 subset) |
 | `host_process.cpp` | **stub** — a browser has no child processes |
+
+## The browser page (issue #72)
+
+`browser_host.cpp` holds the two things a browser page gives the engine in its Worker: a canvas to draw into (a WebGL2
+context on an OffscreenCanvas, and the GL function lookup) and an event loop to go back to (one yield through Asyncify).
+It works only when worker.js provides `Module.repiuCanvas` and `Module.repiuYield`; under Node everything answers
+"none". Win32 and Linux use `src/platform/browser_host_none.cpp`.
+
+The page files are in `page/` (`index.html`, `main.js`, `worker.js`), copied into the build directory by the link target
+`repiu_browser`:
+
+```bash
+./scripts/build_web_wasm.sh --build-dir ~/repiu-web --target repiu_browser
+cd ~/repiu-web && python3 -m http.server 8000     # pick the ZIP and the CHD at http://localhost:8000/
+```
+
+`node_pre.js` makes SDL's video dummy and its audio none wherever there is no `window` (Node, a Worker)
+([design #72](../../../docs/design/20261016-i072-browser-page.md)).
 
 ## What is not here — `host_environment`, `worker_signal`, `host_trace_descriptor`
 

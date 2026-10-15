@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- Issue #72: the browser page for rePIU's web build (design 20261016-i072).
+     Unit 1: the engine runs in a Worker and draws to this canvas; no sound or
+     input yet. Serve this directory over HTTP (python3 -m http.server). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rePIU (web)</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #111; color: #ddd; font: 14px/1.4 system-ui, sans-serif; }
+  main { max-width: 1000px; margin: 0 auto; padding: 16px; }
+  #screen { display: block; width: 100%; aspect-ratio: 4 / 3; background: #000; image-rendering: auto; }
+  #controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+  #status { margin-left: auto; font-variant-numeric: tabular-nums; color: #9c9; }
+  #log { height: 240px; overflow: auto; background: #000; color: #aaa; padding: 8px;
+         font: 12px/1.3 ui-monospace, monospace; white-space: pre-wrap; }
+  button { padding: 6px 14px; }
+</style>
+</head>
+<body>
+<main>
+  <canvas id="screen" width="1280" height="960"></canvas>
+  <div id="controls">
+    <label>ROM ZIP and CHD:
+      <input id="files" type="file" multiple accept=".zip,.chd"></label>
+    <button id="start" disabled>Start</button>
+    <span id="status">Pick the game's ZIP and its CHD (for example pumpitea.zip and 010209_1821.chd).</span>
+  </div>
+  <div id="log"></div>
+</main>
+<script src="main.js"></script>
+</body>
+</html>

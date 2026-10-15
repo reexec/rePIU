@@ -6,18 +6,26 @@
 이 디렉터리는 13개 플랫폼 헤더 중 **wasm에서 성립하는 것만** 구현합니다. 성립하지 않는
 다섯은 같은 자리에 **실패를 반환하는 stub**으로 둡니다.
 
+**issue #67부터 웹 빌드는 엔진을 `emulated` 모델로 빌드합니다.** 게스트는 rex86 CPU 코어가 실행하므로,
+게스트 메모리는 선형 메모리의 같은 주소에 두고(identity 매핑) Emscripten의 데이터·스택·힙은 링크 옵션
+`-sGLOBAL_BASE=0x10000000`으로 그 위에 둡니다. 그래서 가상 메모리가 stub에서 실제 구현이 되었습니다
+([설계 #67](../../../docs/design/20261015-i067-emscripten-headless.md)).
+
 | 파일 | 성격 |
 |---|---|
 | `safe_memory_copy.cpp` | 실제 구현 — 선형 메모리 범위 검사. wasm은 범위 밖 접근이 **복구 불가능한 트랩**이므로 검사가 유일한 안전망입니다 |
 | `web_unsupported.h` | stub이 이유를 **한 번만** 찍는 자리 |
 | `guest_cpu_context.cpp` | **stub** — 호스트에 x86 레지스터 컨텍스트가 없습니다 |
 | `fault_handler.cpp` | **stub** — 하드웨어 폴트를 사용자 핸들러로 전달하는 개념이 없습니다 |
-| `virtual_memory.cpp` | **stub** — 선형 메모리에 페이지 보호가 없습니다 |
+| `virtual_memory.cpp` | **실제 구현 (issue #67)** — 게스트 영역 `[0x00010000, 0x10000000)`의 예약기와 페이지 보호 표. 보호는 rex86의 페이지 속성표가 지킵니다 |
+| `host_cpu_entry_state.cpp` | **실제 구현 (issue #67)** — WOW64 스레드가 보는 셀렉터·FPU 값, 가짜 TEB 한 페이지, 고정 CPUID 표 |
+| `host_reports.cpp` | **"없음" (issue #67)** — 크래시 보고, 폴트 보고의 호스트 정보, 모듈·심볼 이름, 프로세스 간 텔레메트리. 진단만 잃습니다 |
 | `host_process.cpp` | **stub** — 브라우저에 자식 프로세스가 없습니다 |
 
-## 여기 없는 둘 — `host_environment`와 `worker_signal`
+## 여기 없는 것 — `host_environment`, `worker_signal`, `host_trace_descriptor`
 
-이 둘은 웹 사본을 만들지 않고 `src/platform/linux/`의 것을 **그대로 씁니다.** 두 파일 모두
+이들은 웹 사본을 만들지 않고 `src/platform/linux/`의 것을 **그대로 씁니다**(`host_trace_descriptor`는
+issue #67부터, POSIX `write` 하나뿐입니다). 두 파일 모두
 `#if !defined(_WIN32)`로 열려 있고 내용이 POSIX입니다 — `environ`·`setenv`와
 `std::mutex`·`std::condition_variable`뿐이며, Linux 고유 호출이 하나도 없습니다.
 
@@ -52,19 +60,27 @@ Work order: [20260828-513](../../../docs/work-orders/20260828-513-web-wasm-build
 This directory implements **only the platform headers that hold on wasm**. The five that do not
 stay here as **stubs that return failure**.
 
+**Since issue #67 the web build builds the engine, on the `emulated` model.** The guest runs on the
+rex86 CPU core, so guest memory sits at the same addresses in linear memory (identity mapping) and
+Emscripten's data, stack and heap sit above it through the link option `-sGLOBAL_BASE=0x10000000`.
+That is why the virtual memory went from a stub to an implementation
+([design #67](../../../docs/design/20261015-i067-emscripten-headless.md)).
+
 | File | Nature |
 |---|---|
 | `safe_memory_copy.cpp` | Real — a linear-memory range check. Out-of-bounds access in wasm is an **unrecoverable trap**, so the check is the only safety net |
 | `web_unsupported.h` | Where a stub says its reason, **once** |
 | `guest_cpu_context.cpp` | **stub** — the host has no x86 register context |
 | `fault_handler.cpp` | **stub** — there is no notion of delivering a hardware fault to a user handler |
-| `virtual_memory.cpp` | **stub** — linear memory has no page protection |
+| `virtual_memory.cpp` | **real (issue #67)** — a reserver and page-protection record over the guest range `[0x00010000, 0x10000000)`; rex86's page attribute table enforces the protection |
+| `host_cpu_entry_state.cpp` | **real (issue #67)** — the selector and FPU values a WOW64 thread sees, a stand-in TEB page, a fixed CPUID table |
+| `host_reports.cpp` | **"none" (issue #67)** — the crash reporter, the fault report's host details, module and symbol names, cross-process telemetry; only diagnostics are lost |
 | `host_process.cpp` | **stub** — a browser has no child processes |
 
-## The two that are not here — `host_environment` and `worker_signal`
+## What is not here — `host_environment`, `worker_signal`, `host_trace_descriptor`
 
-Neither gets a web copy; the Emscripten build uses the ones in `src/platform/linux/` **as they
-are**. Both open with `#if !defined(_WIN32)` and both are POSIX inside — `environ` and `setenv`,
+None gets a web copy; the Emscripten build uses the ones in `src/platform/linux/` **as they
+are** (`host_trace_descriptor` since issue #67: a single POSIX `write`). Both open with `#if !defined(_WIN32)` and both are POSIX inside — `environ` and `setenv`,
 `std::mutex` and `std::condition_variable`, and not one Linux-specific call.
 
 Two copies of the same code means a day when only one is fixed. The path saying `linux` is

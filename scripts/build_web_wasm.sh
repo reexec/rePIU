@@ -2,24 +2,31 @@
 # Task 513 Stage 1. Builds the platform-neutral core and its execution-free
 # probes for wasm32 with Emscripten.
 #
-# This does not build the execution engine, and it cannot. The engine executes
-# the guest's 32-bit x86 on the host CPU -- an RX code cache, INT3 sentinels,
-# trap-flag single-stepping -- and wasm offers none of that. Stage 1 proves the
-# core is portable to a third target and stops there; Stages 3 and 4 are what
-# make the guest run.
+# Issue #67: and the engine, on the emulated execution model, where the guest
+# runs on the rex86 CPU core and no guest byte runs on the host CPU. `repiu` is
+# the loader, run under Node for now:
 #
-# See docs/design/20260828-513-web-wasm-execution.md.
+#     node build/web_wasm/repiu.js pumpitea      (from the repository root)
+#
+# See docs/design/20260828-513-web-wasm-execution.md and
+# docs/design/20261015-i067-emscripten-headless.md.
 set -euo pipefail
 
 configuration="Release"
 targets=()
+build_dir=""
+rex86_source=""
 
 usage()
 {
     cat <<'USAGE'
 usage: build_web_wasm.sh [--config Debug|Release|RelWithDebInfo|MinSizeRel]
+                         [--build-dir PATH] [--rex86-source PATH]
                          [--target NAME]...
-Builds into build/web_wasm. With no --target, every default target is built.
+Builds into build/web_wasm unless --build-dir names another directory (under
+WSL, one on the Linux filesystem builds far faster than one under /mnt/c).
+--rex86-source builds a local rex86 checkout instead of the pinned tag. With no
+--target, every default target is built.
 
 Release by default, unlike the Linux script: an Emscripten Debug build of this
 core is large and slow to link, and nothing at this stage is being debugged.
@@ -36,6 +43,14 @@ while [[ $# -gt 0 ]]; do
             targets+=("${2:?--target needs a value}")
             shift 2
             ;;
+        --build-dir)
+            build_dir="${2:?--build-dir needs a value}"
+            shift 2
+            ;;
+        --rex86-source)
+            rex86_source="${2:?--rex86-source needs a value}"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -49,7 +64,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-build_dir="$root/build/web_wasm"
+build_dir="${build_dir:-$root/build/web_wasm}"
+rex86_options=()
+if [[ -n "$rex86_source" ]]; then
+    rex86_options+=("-DFETCHCONTENT_SOURCE_DIR_REX86=$rex86_source")
+fi
 
 # The toolchain is checked and named up front, for the same reason
 # build_linux_i386.sh checks for the 32-bit compiler: without it the failure
@@ -97,7 +116,8 @@ sdl_options=(
 
 emcmake cmake -S "$root" -B "$build_dir" \
     -DCMAKE_BUILD_TYPE="$configuration" \
-    "${sdl_options[@]}"
+    "${sdl_options[@]}" \
+    "${rex86_options[@]}"
 
 # The job count is named rather than left to a bare `--parallel`, for the reason
 # build_linux_i386.sh records: an unlimited `-j` took the WSL VM down three

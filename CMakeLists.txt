@@ -41,12 +41,14 @@ endif()
 # cache (cache). The engine's sources that differ by it are named
 # <name>_direct.cpp and <name>_cache.cpp and sit next to their shared file; the
 # engine has no platform or architecture subdirectories (see AGENTS.md).
+# Issue #67: the web runs the guest on the rex86 CPU core (emulated), the model
+# issue #61 made for it; until then it built the core alone (none).
 if(REPIU_ARCH STREQUAL "x86")
     set(REPIU_EXECUTION_MODEL direct)
 elseif(REPIU_ARCH STREQUAL "x64")
     set(REPIU_EXECUTION_MODEL cache)
 else()
-    set(REPIU_EXECUTION_MODEL none)
+    set(REPIU_EXECUTION_MODEL emulated)
 endif()
 
 # Issue #61: the emulated model runs the guest on the rex86 CPU core, so this
@@ -161,7 +163,20 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 #
 # `spdlog::spdlog_header_only` is named only inside the WIN32 and Linux target
 # blocks, so the missing target is unreachable rather than merely unused.
-if(NOT EMSCRIPTEN)
+#
+# Issue #67: the loader is built for the web too now, so spdlog is fetched there
+# as well, with std::format in place of the bundled fmt that Emscripten's clang
+# could not compile.
+if(EMSCRIPTEN)
+    set(SPDLOG_USE_STD_FORMAT ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        spdlog
+        GIT_REPOSITORY https://github.com/gabime/spdlog.git
+        GIT_TAG v1.14.1
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(spdlog)
+else()
     find_package(spdlog CONFIG QUIET)
     if(NOT spdlog_FOUND)
         FetchContent_Declare(
@@ -357,7 +372,9 @@ add_library(repiu_exe
 # The list below is deliberately left at its original indentation rather than
 # shifted inside this guard: re-indenting 82 lines would bury a two-line change
 # in an 84-line diff, and every later `git blame` on this list would stop here.
-if(NOT EMSCRIPTEN)
+#
+# Issue #67: the guard is gone. The web runs the emulated model, whose engine
+# executes no guest byte on the host CPU, so the list builds there too.
 target_sources(repiu_exe
     PRIVATE
         src/engine/cd_audio_wave_out.cpp
@@ -473,13 +490,12 @@ target_sources(repiu_exe
         src/engine/post_shader_catalog.cpp
         src/engine/runtime_memory_policy.cpp
 )
-endif()
 
 # Task 759: the engine's sources that differ by execution model or exist for
 # one host. The engine has no platform or architecture subdirectories; what
-# depends on the OS is in the platform layer below. The engine is not built for
-# the web.
-if(NOT EMSCRIPTEN)
+# depends on the OS is in the platform layer below. Issue #67: built for the
+# web too, on the emulated model.
+if(TRUE)
     if(REPIU_PLATFORM STREQUAL "win32")
         target_sources(repiu_exe
             PRIVATE
@@ -547,10 +563,16 @@ else()
     # POSIX, shared by the Linux and web builds.
     target_sources(repiu_exe
         PRIVATE
-            src/platform/linux/host_thread.cpp
             src/platform/linux/host_time.cpp
             src/platform/linux/host_error_stream.cpp
     )
+    # Issue #67: the web has no threads (it links without pthreads), so its
+    # thread layer is its own.
+    if(EMSCRIPTEN)
+        target_sources(repiu_exe PRIVATE src/platform/web/host_thread.cpp)
+    else()
+        target_sources(repiu_exe PRIVATE src/platform/linux/host_thread.cpp)
+    endif()
 endif()
 if(REPIU_PLATFORM STREQUAL "linux")
     target_sources(repiu_exe
@@ -574,6 +596,13 @@ if(REPIU_PLATFORM STREQUAL "web")
         PRIVATE
             src/platform/web/host_cycle_counter.cpp
             src/platform/web/build_identity.cpp
+            # Issue #67: what the engine asks of the host beyond running the
+            # guest, now that the engine is built here.
+            src/platform/web/host_cpu_entry_state.cpp
+            src/platform/web/host_reports.cpp
+            src/platform/web/guest_stack_switch.cpp
+            src/platform/web/legacy_gl_stubs.cpp
+            src/platform/linux/host_trace_descriptor.cpp
     )
 endif()
 
@@ -778,10 +807,8 @@ target_include_directories(repiu_exe
 )
 
 # Task 761: the in-game OSD draws with Dear ImGui inside the Glide backend's
-# window. The engine, and with it the OSD, is not built for the web.
-if(NOT EMSCRIPTEN)
-    target_link_libraries(repiu_exe PRIVATE repiu_imgui)
-endif()
+# window. Issue #67: the engine, and with it the OSD, is built for the web too.
+target_link_libraries(repiu_exe PRIVATE repiu_imgui)
 
 # Task 739. The Glide backend inside this static library calls OpenGL directly,
 # so on Linux every consumer has to link GL -- and a static library's
@@ -935,6 +962,9 @@ target_link_libraries(repiu_core_probe
         repiu_exe
         repiu_zydis
 )
+
+# Issue #67: the probes run the engine's platform layer, so the web probe gets
+# the loader's memory layout (repiu_link_web_engine, below).
 
 if(UNIX AND NOT EMSCRIPTEN)
     if(CMAKE_SIZEOF_VOID_P EQUAL 4)
@@ -1158,6 +1188,53 @@ if(WIN32)
             repiu_imgui
             spdlog::spdlog_header_only
     )
+endif()
+
+# Issue #67: the memory layout of every web binary that runs the engine. The
+# guest range sits at the same addresses in linear memory, below Emscripten's
+# data, stack and heap, which GLOBAL_BASE lifts to 0x10000000
+# (src/platform/web/virtual_memory.cpp hands out the range below it, and
+# refuses to in a binary linked without this). The stack is far above
+# Emscripten's 64 KB default: on one thread the guest, the HLE, the Glide
+# backend and the decoders all run on it, and the reports are built on it.
+function(repiu_link_web_engine target)
+    if(EMSCRIPTEN)
+        target_link_options(${target}
+            PRIVATE
+                -sGLOBAL_BASE=268435456
+                -sINITIAL_MEMORY=805306368
+                -sALLOW_MEMORY_GROWTH=1
+                -sSTACK_SIZE=16777216
+        )
+    endif()
+endfunction()
+repiu_link_web_engine(repiu_core_probe)
+
+# Issue #67: the loader on the web, run under Node for now (phase 2 of design
+# #64). NODERAWFS reads the ROMs from the host filesystem and NODE_HOST_ENV
+# passes the environment through; both are Node-only, and phase 4's browser
+# build replaces them.
+if(EMSCRIPTEN)
+    add_executable(repiu
+        src/host/loader/main.cpp
+        src/launcher/launcher_ui.cpp
+    )
+    target_link_libraries(repiu
+        PRIVATE
+            repiu_exe
+            repiu_imgui
+            spdlog::spdlog_header_only
+    )
+    repiu_link_web_engine(repiu)
+    target_link_options(repiu
+        PRIVATE
+            -sNODERAWFS=1
+            -sNODE_HOST_ENV=1
+            -sEXIT_RUNTIME=1
+            "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/node_pre.js"
+    )
+    set_property(TARGET repiu APPEND PROPERTY LINK_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/node_pre.js")
 endif()
 
 if(WIN32)

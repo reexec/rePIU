@@ -12,15 +12,16 @@
 // model. A host whose CPU executes no guest instruction at all runs the guest
 // on the rex86 CPU core (issue #61): the `emulated` model, which the web build
 // and ARM hosts need and a 32-bit x86 host can build to compare against
-// `direct`. A host that runs no guest at all is the `none` model.
+// `direct`. Issue #67: the web build runs it; the `none` model it used before,
+// for a build that ran no guest, is gone.
 //
 // That is the one difference by architecture above the platform layer, and
 // these functions are where shared code asks about it. They are implemented in
-// src/runtime/execution_model_direct.cpp, execution_model_cache.cpp,
-// execution_model_emulated.cpp and execution_model_none.cpp; CMake builds the
-// one that matches the host (REPIU_EXECUTION_MODEL). Code that differs by model and needs the engine's
-// types sits next to its shared file as <name>_direct.cpp and
-// <name>_cache.cpp.
+// src/runtime/execution_model_direct.cpp, execution_model_cache.cpp and
+// execution_model_emulated.cpp; CMake builds the one that matches the host
+// (REPIU_EXECUTION_MODEL). Code that differs by model and needs the engine's
+// types sits next to its shared file as <name>_direct.cpp, <name>_cache.cpp
+// and <name>_emulated.cpp.
 
 namespace repiu::runtime::execution_model
 {
@@ -30,7 +31,7 @@ namespace repiu::runtime::execution_model
 
 // Whether the guest is entered through the emitted long-mode code cache, so
 // that what is emitted for it must be long-mode code. Not the negation of the
-// one above: the `none` model answers false to both.
+// one above: the `emulated` model answers false to both.
 [[nodiscard]] bool RunsLongModeCodeCache();
 
 // Issue #61. Whether the guest runs on the rex86 CPU core, which stops where a

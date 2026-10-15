@@ -42,6 +42,12 @@ bool RemoveFaultHandler()
     return false;
 }
 
+// Task 717's Linux x64 data watch. Nothing to arm here.
+bool ArmLinuxDataWatchFromEnvironment()
+{
+    return false;
+}
+
 }  // namespace repiu::platform
 
 #endif  // __EMSCRIPTEN__

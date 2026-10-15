@@ -65,6 +65,7 @@ namespace repiu::engine
 {
 
 struct ThreadContext;
+class OneThreadHostLoop;
 
 extern "C" ThreadContext* g_repiu_active_thread_context;
 
@@ -184,6 +185,12 @@ struct ThreadContext
     // Issue #61. The same answer on the emulated model: a guest is running on
     // the emulated CPU, which has no stack switch to record it.
     bool emulated_entry_active = false;
+    // Issue #64. Set while the guest runs on the host's own thread
+    // (RunsHostOnOneThread): the loop the emulated CPU hands the host's turns
+    // to between its stops, and a yield the HLE asked for (YieldToHost).
+    // Touched only by that one thread.
+    OneThreadHostLoop* one_thread_host = nullptr;
+    bool host_turn_requested = false;
     bool enable_privileged_trap_hle = false;
     bool enable_traced_dos_hle = false;
     bool enable_segment_load_hle = false;

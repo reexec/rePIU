@@ -9,6 +9,7 @@
 #include "repiu/engine/session_identity.h"
 #include "repiu/hle/glide_lfb.h"
 #include "repiu/runtime/env_toggle.h"
+#include "repiu/runtime/execution_model.h"
 #include "repiu/hle/glide_texture_decode.h"
 #include "repiu/input/jamma_input_bindings.h"
 #include "repiu/input/pad_exit_chord.h"
@@ -309,6 +310,22 @@ void GlideOpenGlBackend::SetExecutionBackend(
   execution_backend_ = backend;
 }
 
+// Issue #64. On one thread (RunsHostOnOneThread) every command comes from the
+// host thread itself and runs in place, so a command that has to be handed to
+// the host waits for a host that only runs after the caller returns: a
+// deadlock. Reaching here on one thread is a bug, and stopping at once with a
+// line is better than hanging without one.
+void GlideOpenGlBackend::RefuseCrossThreadCommandOnOneThread() const {
+  if (!runtime::execution_model::RunsHostOnOneThread()) {
+    return;
+  }
+  fprintf(stderr,
+          "[repiu-glide] a command was handed to the host thread on the "
+          "one-thread host, which would deadlock\n");
+  fflush(stderr);
+  std::abort();
+}
+
 bool GlideOpenGlBackend::IsHostThread() const {
   return host_thread_id_ == std::thread::id{} ||
          host_thread_id_ == std::this_thread::get_id();
@@ -553,6 +570,7 @@ void GlideOpenGlBackend::InvokeOnHostThread(std::function<void()> command) {
     return;
   }
 
+  RefuseCrossThreadCommandOnOneThread();
   const std::uint64_t enter = timing ? ReadGlideGateTimingCycles() : 0U;
   std::exception_ptr command_exception;
   // Task 431: from here until this function returns, the guest thread runs no
@@ -627,6 +645,7 @@ bool GlideOpenGlBackend::PostToHostThread(std::function<void()> command,
     ++async_present().executed_count;
     return true;
   }
+  RefuseCrossThreadCommandOnOneThread();
   std::unique_lock<std::mutex> lock(host_command_mutex_);
   async_present().enabled.store(true, std::memory_order_relaxed);
   const auto has_room = [this, swap_command]() {
@@ -1401,6 +1420,10 @@ void GlideOpenGlBackend::PumpEvents() {
   }
   if (dummy_mode_ || window_ == nullptr) {
     return;
+  }
+  // Issue #64: on one thread the script has no thread of its own.
+  if (input_script_ != nullptr) {
+    input_script_->player.Pump();
   }
   // Task 754: the two clocks, compared a second at a time.
   glide_swap_interval_policy_.event_clock_steady = EventClockUsesSteady();

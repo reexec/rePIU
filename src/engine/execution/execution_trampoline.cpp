@@ -90,6 +90,7 @@
 #include "repiu/engine/exception_rescue_win32.h"
 #include "guest_owned_breakpoint.h"
 #include "live_telemetry_snapshot.h"
+#include "host_turn.h"
 #include "repiu/engine/final_execution_report.h"
 #include "repiu/platform/guest_cpu_context.h"
 #include "repiu/platform/atomic_ops.h"
@@ -7298,7 +7299,11 @@ bool RunExecutionThread(
     std::uint32_t create_error = 0;
     const repiu::platform::HostThreadEntry guest_thread_proc =
         SelectGuestThreadEntry();
-    if (!repiu::platform::CreateHostThread(guest_thread_proc, &context,
+    // Issue #64. On one thread no guest thread is made: the guest runs on this
+    // one below, taking turns with the host (host_turn.h).
+    const bool one_thread = runtime::execution_model::RunsHostOnOneThread();
+    if (!one_thread &&
+        !repiu::platform::CreateHostThread(guest_thread_proc, &context,
                                            &thread, &create_error))
     {
         std::ostringstream stream;
@@ -7316,7 +7321,8 @@ bool RunExecutionThread(
         repiu::platform::AtomicExchange(&context.shared_live_telemetry->host_phase, 2);
         repiu::platform::AtomicExchange(
             &context.shared_live_telemetry->guest_thread_id,
-            static_cast<long>(thread.id));
+            static_cast<long>(one_thread ? repiu::platform::CurrentThreadId()
+                                         : thread.id));
         repiu::platform::AtomicExchange(
             &context.shared_live_telemetry->host_main_thread_id,
             static_cast<long>(repiu::platform::CurrentThreadId()));
@@ -7333,17 +7339,26 @@ bool RunExecutionThread(
     }
     attempt->guest_stack_switch_attempted = use_guest_stack;
     std::uint32_t exit_code = 0;
-    const HostPollOutcome wait_result = PollThreadUntilExit(
-        thread,
-        timeout_milliseconds,
-        stall_timeout_milliseconds,
+    ThreadContext* const progress_context =
         (enable_single_step_trace || aot_placement != nullptr ||
          stall_timeout_milliseconds !=
              repiu::runtime::kWaitForeverMilliseconds)
-            ? &context : nullptr,
-        &context,
-        &exit_code,
-        &attempt->stall_timed_out);
+            ? &context : nullptr;
+    const HostPollOutcome wait_result = one_thread
+        ? RunGuestOnThisThread(guest_thread_proc,
+                               &context,
+                               timeout_milliseconds,
+                               stall_timeout_milliseconds,
+                               progress_context,
+                               &exit_code,
+                               &attempt->stall_timed_out)
+        : PollThreadUntilExit(thread,
+                              timeout_milliseconds,
+                              stall_timeout_milliseconds,
+                              progress_context,
+                              &context,
+                              &exit_code,
+                              &attempt->stall_timed_out);
 
     // Task 503d-19: 3c owns installing and removing the fault handler on both
     // hosts. `vectored_handler` is the flag saying one is installed; what it
@@ -7437,11 +7452,18 @@ bool RunExecutionThread(
             repiu::platform::ThreadInterruptFailure::kNone;
         bool interrupt_answered = false;
         std::uint32_t recovery_attempts = 0;
+        // Issue #64. On one thread the guest has already stopped: the host
+        // turn that ended the run returned to the guest's loop, which ran no
+        // further slice. There is no thread to ask, interrupt or join.
+        if (one_thread)
+        {
+            interrupt_answered = true;
+        }
         // Issue #61. A guest thread running on the emulated CPU is never in
         // guest code as far as the host can see, so it is asked to stop
         // rather than interrupted, and joined while the gate keeps being
         // served for the same reason as below.
-        if (trampoline_model::RequestGuestStop(&context))
+        else if (trampoline_model::RequestGuestStop(&context))
         {
             while (recovery_attempts < kShutdownRecoveryAttempts &&
                    !recovery_request.recovered)
@@ -7454,7 +7476,7 @@ bool RunExecutionThread(
             interrupt_answered = recovery_request.recovered;
             recovery_attempts = kShutdownRecoveryAttempts;
         }
-        while (recovery_attempts < kShutdownRecoveryAttempts)
+        while (!one_thread && recovery_attempts < kShutdownRecoveryAttempts)
         {
             ++recovery_attempts;
             recovery_request.attempt = recovery_attempts;
@@ -7486,7 +7508,7 @@ bool RunExecutionThread(
         }
 
         bool gracefully_interrupted =
-            interrupt_answered && recovery_request.recovered;
+            one_thread || (interrupt_answered && recovery_request.recovered);
         if (!interrupt_answered &&
             interrupt_failure ==
                 repiu::platform::ThreadInterruptFailure::kNotDelivered)
@@ -7522,7 +7544,13 @@ bool RunExecutionThread(
         }
 #endif
 
-        if (gracefully_interrupted && recovery_request.recovered)
+        if (one_thread)
+        {
+            context.hle_message = host_exit_requested
+                ? "exit requested; the one-thread loop stopped the guest"
+                : "timeout reached; the one-thread loop stopped the guest";
+        }
+        else if (gracefully_interrupted && recovery_request.recovered)
         {
             context.hle_message = host_exit_requested
                 ? "SDL exit requested; hijacked guest thread for clean teardown"

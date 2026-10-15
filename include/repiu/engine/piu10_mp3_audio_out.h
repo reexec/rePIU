@@ -81,6 +81,9 @@ public:
 
     bool Open();
     void Close();
+    // Issue #64. On one thread (RunsHostOnOneThread) there is no worker, and
+    // the host turn calls this to run the decoder. A no-op while a worker runs.
+    void Pump();
     bool SetGain(float gain);
     void SetStartupLatencyMs(std::uint32_t latency_ms);
     void SetStreamAuditEnabled(bool enabled);

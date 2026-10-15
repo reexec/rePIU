@@ -29,6 +29,9 @@ public:
     // MSCDEX 83h: park the head at a logical LBA without producing audio.
     bool Seek(std::uint32_t lba);
     void Close();
+    // Issue #64. On one thread (RunsHostOnOneThread) there is no worker, and
+    // the host turn calls this to fill the stream. A no-op while a worker runs.
+    void Pump();
     bool playing() const;
     bool paused() const;
     // Position of the audio actually reaching the device, not the decode

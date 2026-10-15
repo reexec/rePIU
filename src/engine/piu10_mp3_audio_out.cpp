@@ -1,6 +1,7 @@
 #include "repiu/engine/piu10_mp3_audio_out.h"
 #include "repiu/engine/timer_latency_trace.h"
 #include "repiu/engine/piu10_frame_sync_history.h"
+#include "repiu/runtime/execution_model.h"
 
 #include "repiu/sound/decoder_input_fifo.h"
 #include "repiu/sound/mpeg_audio_frame.h"
@@ -523,79 +524,125 @@ struct Piu10Mp3AudioOut::Impl
         }
     }
 
-    void Run()
+    // What one pass of the decoder asks for next.
+    enum class StepResult
+    {
+        // Decoded or took input; step again.
+        kProgressed,
+        // No PCM is needed yet; wait a little.
+        kIdle,
+        // PCM is needed but no input has arrived; wait for the guest to feed.
+        kStarved,
+    };
+
+    // The decoder's state between passes. Issue #64: members rather than the
+    // worker's locals, so the host turn can run the same passes on one thread.
+    struct DecodeState
     {
         mp3dec_t decoder = {};
-        mp3dec_init(&decoder);
         std::vector<std::uint8_t> encoded;
-        encoded.reserve(16384U);
         std::size_t cursor = 0U;
         bool stream_found = false;
         bool starvation_latched = false;
         std::array<std::uint8_t, kRingDrainBytes> incoming = {};
+    };
+    DecodeState decode;
 
+    void ResetDecoder()
+    {
+        mp3dec_init(&decode.decoder);
+        decode.encoded.clear();
+        decode.encoded.reserve(16384U);
+        decode.cursor = 0U;
+        decode.stream_found = false;
+        decode.starvation_latched = false;
+    }
+
+    // One pass: what the worker's loop did once.
+    StepResult Step()
+    {
+        AdvanceFrameSyncToPlayback();
+        if (!NeedsPcm())
+        {
+            return StepResult::kIdle;
+        }
+
+        const std::size_t count = compressed.Pop(decode.incoming);
+        if (count != 0U)
+        {
+            if (stream_audit_enabled)
+            {
+                consumer_audit.Consume(
+                    std::span<const std::uint8_t>(decode.incoming.data(),
+                                                  count),
+                    "consumer", LogStreamChunkDigest);
+            }
+            decode.encoded.insert(decode.encoded.end(), decode.incoming.begin(),
+                                  decode.incoming.begin() + count);
+            decode.starvation_latched = false;
+        }
+
+        bool progressed = false;
+        while (NeedsPcm())
+        {
+            const std::size_t previous_cursor = decode.cursor;
+            if (!DecodeOne(&decode.encoded, &decode.cursor, &decode.stream_found,
+                           &decode.decoder))
+            {
+                break;
+            }
+            const std::size_t consumed = decode.cursor - previous_cursor;
+            if (!compressed.Consume(consumed))
+            {
+                std::fprintf(
+                    stderr,
+                    "[repiu-piu10-mp3] compressed inflight "
+                    "accounting failure consumed=%zu inflight=%zu\n",
+                    consumed, compressed.inflight_size());
+                shutdown.store(true, std::memory_order_release);
+                break;
+            }
+            progressed = true;
+            CompactEncoded(&decode.encoded, &decode.cursor);
+        }
+        CompactEncoded(&decode.encoded, &decode.cursor);
+        decoder_pending_bytes.store(
+            decode.encoded.size() - decode.cursor, std::memory_order_relaxed);
+
+        if (!progressed && count == 0U)
+        {
+            if (playback_started.load(std::memory_order_relaxed) &&
+                decode.encoded.size() == decode.cursor &&
+                !decode.starvation_latched)
+            {
+                starvation_events.fetch_add(1U, std::memory_order_relaxed);
+                decode.starvation_latched = true;
+            }
+            return StepResult::kStarved;
+        }
+        return StepResult::kProgressed;
+    }
+
+    void Run()
+    {
         while (!shutdown.load(std::memory_order_acquire))
         {
-            AdvanceFrameSyncToPlayback();
-            if (!NeedsPcm())
+            switch (Step())
             {
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
-                continue;
-            }
-
-            const std::size_t count = compressed.Pop(incoming);
-            if (count != 0U)
-            {
-                if (stream_audit_enabled)
+                case StepResult::kIdle:
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                    break;
+                case StepResult::kStarved:
                 {
-                    consumer_audit.Consume(
-                        std::span<const std::uint8_t>(incoming.data(), count),
-                        "consumer", LogStreamChunkDigest);
-                }
-                encoded.insert(
-                    encoded.end(), incoming.begin(), incoming.begin() + count);
-                starvation_latched = false;
-            }
-
-            bool progressed = false;
-            while (NeedsPcm())
-            {
-                const std::size_t previous_cursor = cursor;
-                if (!DecodeOne(&encoded, &cursor, &stream_found, &decoder))
-                {
+                    std::unique_lock<std::mutex> lock(wake_mutex);
+                    wake.wait_for(lock, std::chrono::milliseconds(2), [this]() {
+                        return shutdown.load(std::memory_order_acquire) ||
+                            compressed.ring_size() != 0U;
+                    });
                     break;
                 }
-                const std::size_t consumed = cursor - previous_cursor;
-                if (!compressed.Consume(consumed))
-                {
-                    std::fprintf(
-                        stderr,
-                        "[repiu-piu10-mp3] compressed inflight "
-                        "accounting failure consumed=%zu inflight=%zu\n",
-                        consumed, compressed.inflight_size());
-                    shutdown.store(true, std::memory_order_release);
+                case StepResult::kProgressed:
                     break;
-                }
-                progressed = true;
-                CompactEncoded(&encoded, &cursor);
-            }
-            CompactEncoded(&encoded, &cursor);
-            decoder_pending_bytes.store(
-                encoded.size() - cursor, std::memory_order_relaxed);
-
-            if (!progressed && count == 0U)
-            {
-                if (playback_started.load(std::memory_order_relaxed) &&
-                    encoded.size() == cursor && !starvation_latched)
-                {
-                    starvation_events.fetch_add(1U, std::memory_order_relaxed);
-                    starvation_latched = true;
-                }
-                std::unique_lock<std::mutex> lock(wake_mutex);
-                wake.wait_for(lock, std::chrono::milliseconds(2), [this]() {
-                    return shutdown.load(std::memory_order_acquire) ||
-                        compressed.ring_size() != 0U;
-                });
             }
         }
         decoder_pending_bytes.store(0U, std::memory_order_relaxed);
@@ -685,12 +732,36 @@ bool Piu10Mp3AudioOut::Open()
     impl_->producer_audit.Reset();
     impl_->consumer_audit.Reset();
     impl_->playback_started.store(false, std::memory_order_relaxed);
-    impl_->worker = std::thread([this]() { impl_->Run(); });
+    impl_->ResetDecoder();
+    // Issue #64: on one thread the host turn runs the decoder instead.
+    if (!runtime::execution_model::RunsHostOnOneThread())
+    {
+        impl_->worker = std::thread([this]() { impl_->Run(); });
+    }
     SDL_ResumeAudioStreamDevice(impl_->stream);
     impl_->ready.store(true, std::memory_order_release);
     impl_->message = "PIU10 persistent MP3 ready through minimp3 and SDL3";
     std::fprintf(stderr, "[repiu-piu10-mp3] %s\n", impl_->message.c_str());
     return true;
+}
+
+// Issue #64. A bounded number of passes, so one turn cannot run long.
+void Piu10Mp3AudioOut::Pump()
+{
+    constexpr int kStepsPerPump = 16;
+    if (!impl_->ready.load(std::memory_order_acquire) ||
+        impl_->worker.joinable() ||
+        impl_->shutdown.load(std::memory_order_acquire))
+    {
+        return;
+    }
+    for (int step = 0; step < kStepsPerPump; ++step)
+    {
+        if (impl_->Step() != Impl::StepResult::kProgressed)
+        {
+            return;
+        }
+    }
 }
 
 void Piu10Mp3AudioOut::Close()

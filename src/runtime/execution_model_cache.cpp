@@ -21,6 +21,11 @@ bool RunsGuestOnEmulatedCpu()
     return false;
 }
 
+bool RunsHostOnOneThread()
+{
+    return false;
+}
+
 bool RunsLongModeCodeCache()
 {
     return true;

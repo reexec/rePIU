@@ -101,9 +101,15 @@ Glide 랑데부가 모든 경로에서 즉시 실행되는지는 교착 방지 �
 `target specific option mismatch`로 컴파일되지 않았습니다. CI가 Win32만 빌드해 드러나지 않았습니다. 같은 파일의
 다른 레지스터 읽기처럼 인라인 어셈블리 `stmxcsr`로 바꿨습니다.
 
+### 사용자 확인 (2026-10-15)
+
+사용자가 단일 스레드 `emulated` Release로 pumpitea를 직접 실행해 **로고, 오프닝 영상, 음악 출력**을 확인했습니다.
+이 PC에서는 느려서 게임(타이틀·데모 플레이)까지는 가지 못했습니다. 속도는 따로 볼 문제로 두고, 단계 1은 정상으로
+처리했습니다.
+
 ### 남은 것
 
-* 사용자 확인: `emulated` 단일 스레드로 pumpitea 타이틀·데모 플레이 도달, 소리, 코인·시작 입력.
+* 이 PC에서 타이틀·데모 플레이 도달(속도 문제), 코인·시작 입력에 대한 게임의 반응.
 * 장면별 "대기 루프를 뺀" 필요 처리량 측정(위 해석의 확인).
 * 단계 2(Emscripten 빌드, Node 헤드리스 실행)부터는 각자 작업 지시로.
 
@@ -224,10 +230,15 @@ hands-on run.
 build (no `-msse`): `target specific option mismatch`. CI builds only Win32, so it went unseen. It now reads MXCSR with
 inline `stmxcsr`, like the file's other register reads.
 
+### Confirmed by the user (2026-10-15)
+
+The user ran pumpitea on the single-threaded `emulated` Release and confirmed **the logo, the opening video and the
+music**. On this PC it was too slow to reach the game (the title and the demo play). Speed is left as a matter of its
+own, and phase 1 is treated as working.
+
 ### Remaining
 
-* For the user to confirm: on single-threaded `emulated`, pumpitea reaching the title and the demo play, the sound, the
-  coin and start input.
+* Reaching the title and the demo play on this PC (the speed problem), and the game's response to coin and start input.
 * Measuring the per-scene need with the wait loops taken out (to confirm the inference above).
 * Phase 2 on (the Emscripten build, the headless run under Node), each with its own work order.
 

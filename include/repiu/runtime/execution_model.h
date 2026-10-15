@@ -39,6 +39,13 @@ namespace repiu::runtime::execution_model
 // of either.
 [[nodiscard]] bool RunsGuestOnEmulatedCpu();
 
+// Issue #64. Whether the host runs the guest, the Glide commands, the timer
+// schedule and the audio on one thread, taking turns, as the browser's single
+// Worker has to. True on the emulated model only: it has the same value as the
+// question above, but the audio and Glide code asks whether there are threads,
+// not what the CPU is.
+[[nodiscard]] bool RunsHostOnOneThread();
+
 // Task 562. Where an emitted return goes to ask where a guest address lives.
 // Zero where the thunk does not exist, and zero is the answer that matters
 // rather than a missing case: a host without it emits the boundary it emitted

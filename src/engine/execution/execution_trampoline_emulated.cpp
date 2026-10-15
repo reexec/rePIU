@@ -14,6 +14,7 @@
 #include "aot_dbt_hle_dispatch.h"
 #include "aot_runtime_dispatch.h"
 #include "execution_internal.h"
+#include "host_turn.h"
 
 #include "repiu/engine/exception_rescue_win32.h"
 #include "repiu/engine/pic_timer_in_service.h"
@@ -479,6 +480,14 @@ public:
                 mirror_retries_ = 0U;
             }
             end = Handle(event, trap);
+            // Issue #64: on one thread the host's turn comes between stops,
+            // when it is due (host_turn.h).
+            OneThreadHostLoop* const host = context_->one_thread_host;
+            if (end == RunEnd::kContinue && host != nullptr && host->TurnDue(*context_) &&
+                !host->TakeTurn(context_))
+            {
+                end = RunEnd::kStopped;
+            }
         }
         repiu::platform::SetMemoryChangeObserver(nullptr, nullptr);
         std::fprintf(stderr,

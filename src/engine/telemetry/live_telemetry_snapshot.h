@@ -67,6 +67,12 @@ struct SharedTelemetryMapping
     }
 };
 
+// One line of live progress telemetry, with the elapsed time and the host
+// loop's iteration. Issue #64: written from the host turn (host_turn.cpp).
+void WriteLiveTelemetrySnapshot(const ThreadContext& context,
+                                std::uint32_t elapsed_milliseconds,
+                                std::uint32_t poll_iteration);
+
 // Task 503d-18: the thread is the layer's handle, and the loop asks it whether
 // the guest is still running rather than reading GetExitCodeThread and comparing
 // against a sentinel that is also a legal exit code.

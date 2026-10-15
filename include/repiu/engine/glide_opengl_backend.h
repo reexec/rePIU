@@ -419,6 +419,7 @@ private:
     void ApplyTextureFullPrecision();
 
     bool IsHostThread() const;
+    void RefuseCrossThreadCommandOnOneThread() const;
     void InvokeOnHostThread(std::function<void()> command);
     bool BufferSwapOnHostThread(std::uint32_t swap_interval,
                                 bool guest_gate_command);

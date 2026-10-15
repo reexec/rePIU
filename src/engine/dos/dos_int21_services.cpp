@@ -1,6 +1,7 @@
 #include "dos_int21_services.h"
 #include "aot/aot_runtime_dispatch.h"
 #include "execution_internal.h"
+#include "host_turn.h"
 #include "guest_memory_access.h"
 #include "repiu/engine/timer_latency_trace.h"
 #include "dpmi_mscdex_services.h"
@@ -1674,7 +1675,9 @@ bool HandleDosConsoleInputWithoutEcho(
         if (!context->bios_keyboard.Pop(false, &keystroke))
         {
             ++context->dos_console_input_wait_count;
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            // Issue #64: on one thread the key arrives in the host's turn,
+            // which comes only once this slice ends.
+            YieldToHost(context, std::chrono::milliseconds(1));
             return false;
         }
         character = static_cast<std::uint8_t>(keystroke & 0xFFU);

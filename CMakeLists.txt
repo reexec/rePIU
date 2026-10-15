@@ -391,6 +391,7 @@ target_sources(repiu_exe
         src/engine/input/sdl_pad_input.cpp
         src/engine/execution/execution_probe_memory_dump.cpp
         src/engine/execution/execution_trampoline.cpp
+        src/engine/execution/host_turn.cpp
         src/engine/execution/single_step_hotspot_profile.cpp
         src/engine/dos/dos_int21_services.cpp
         src/engine/dos/dpmi_mscdex_services.cpp

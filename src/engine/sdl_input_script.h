@@ -12,8 +12,10 @@
 #include <SDL3/SDL.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -37,10 +39,17 @@ class SdlInputScriptPlayer
 {
 public:
     ~SdlInputScriptPlayer();
+
     // Reads REPIU_INPUT_SCRIPT; returns false (and stays idle) when unset,
     // unreadable or empty.
     bool StartFromEnvironment(SDL_WindowID window);
     void Stop();
+
+    // Issue #64. On one thread (RunsHostOnOneThread) there is no player
+    // thread, and the host's event pump calls this to push what is due. A
+    // no-op while the thread plays the script.
+    void Pump();
+
     std::uint64_t pushed_events() const
     {
         return pushed_.load(std::memory_order_relaxed);
@@ -48,8 +57,19 @@ public:
 
 private:
     void Run();
+    void Push(const SdlInputScriptStep& step, bool down);
+    // Pushes every event due at `now`; the time of the next one, or empty when
+    // the script is done.
+    std::optional<std::chrono::steady_clock::time_point> Advance(
+        std::chrono::steady_clock::time_point now);
+
     std::vector<SdlInputScriptStep> steps_;
     SDL_WindowID window_ = 0;
+    std::chrono::steady_clock::time_point origin_{};
+    std::chrono::steady_clock::time_point release_at_{};
+    std::size_t next_ = 0U;
+    bool key_down_ = false;
+    bool started_ = false;
     std::atomic<bool> stop_{false};
     std::atomic<std::uint64_t> pushed_{0};
     std::thread thread_;

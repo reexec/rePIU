@@ -33,6 +33,10 @@ public:
     bool Open(const std::filesystem::path& rom_zip_path);
     void Close();
 
+    // Issue #64. On one thread (RunsHostOnOneThread) there is no worker, and
+    // the host turn calls this to fill the stream. A no-op while a worker runs.
+    void Pump();
+
     bool available() const;
     const std::string& message() const;
 

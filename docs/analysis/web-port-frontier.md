@@ -19,10 +19,14 @@ x87 표현은 rex86이 80비트로 구현해 해결됐고, Worker 전제는 단�
 | 실행 규칙 | `dynamic` 백엔드의 HLE 경계 분류(`IsHleBoundary`)와 base 접기를 그대로 씀 | 설계 #61 결정 9, rex86 #69·#70 |
 | 처리량 | Windows 인터프리터 약 9.3 MIPS, 약 7.4fps(`dynamic`은 약 59fps) | 로그 2차 |
 | **필요 처리량(추정)** | **프레임당 약 125만 명령, 60fps에 약 75 MIPS** (로딩 포함 평균) | 로그 2차 |
+| **단일 스레드 호스트 루프** (issue #64 단계 1) | **`emulated`는 게스트·Glide·tick·오디오·입력을 한 스레드에서 번갈아 돌림.** 경계 trace가 첫 벽시계 의존까지 단계 1 이전과 같음 | [설계 #64](../design/20261015-i064-browser-host-single-thread-loop.md), [로그](../work-logs/20261015-i064-browser-host-single-thread-loop.md) |
+| 처리량 지표 (추정) | 단일 스레드에서 실행 단계는 29% 줄었지만 화면 교체 수는 같고 HLE 진행은 같거나 앞섬. **실행 단계/초에는 게스트의 대기 루프가 섞여 있어** 위의 75 MIPS는 상한으로 봐야 함 | 로그 #64 |
 | 브라우저 실행 | 아직 없음 | — |
 
-**다음 단위:** 브라우저 호스트(단일 Worker, OPFS, WebGL2, AudioWorklet)와, 실시간을 위한 rex86 번역 범위 확대(x87,
-REP 문자열). 장면별 프레임당 명령 측정이 그 우선순위를 정합니다.
+**다음 단위:** 브라우저 호스트 단계 2(Emscripten 빌드, Node 헤드리스 실행과 경계 trace 대조), 단계 3(Glide 렌더러를
+GLES 3 / WebGL2로), 단계 4(페이지: Worker, OffscreenCanvas, OPFS, AudioWorklet, 입력)
+([설계 #64](../design/20261015-i064-browser-host-single-thread-loop.md)). 실시간을 위한 rex86 번역 범위 확대(x87, REP
+문자열)는 대기 루프를 뺀 장면별 측정이 우선순위를 정합니다.
 
 ## 1. 상태 — **보류 중** (2026-08-28)
 
@@ -122,10 +126,14 @@ Worker assumption is decided as a single Worker.
 | Execution rules | the `dynamic` backend's HLE boundary classification (`IsHleBoundary`) and base folds, as they are | design #61 decision 9, rex86 #69 and #70 |
 | Throughput | the Windows interpreter at about 9.3 MIPS, about 7.4 fps (`dynamic`: about 59 fps) | the log's second pass |
 | **Throughput needed (estimate)** | **about 1.25 million instructions a frame, about 75 MIPS at 60 fps** (averaged with loading) | the log's second pass |
+| **The single-threaded host loop** (issue #64 phase 1) | **`emulated` runs the guest, Glide, ticks, audio and input on one thread, taking turns.** The boundary trace matches the one before phase 1 up to the first wall-clock dependence | [design #64](../design/20261015-i064-browser-host-single-thread-loop.md), [log](../work-logs/20261015-i064-browser-host-single-thread-loop.md) |
+| Throughput measure (inferred) | on one thread the steps fell by 29% but the buffer swaps are equal and the HLE progress is equal or ahead. **Steps per second include the guest's wait loops**, so the 75 MIPS above is an upper bound | log #64 |
 | Running in a browser | not yet | — |
 
-**Next units:** the browser host (single Worker, OPFS, WebGL2, AudioWorklet) and, for real time, wider rex86 translation
-(the x87, REP strings). Per-scene instructions-per-frame measurements set their priority.
+**Next units:** browser host phase 2 (the Emscripten build, a headless run under Node with its boundary trace compared),
+phase 3 (the Glide renderer on GLES 3 / WebGL2) and phase 4 (the page: Worker, OffscreenCanvas, OPFS, AudioWorklet,
+input) ([design #64](../design/20261015-i064-browser-host-single-thread-loop.md)). Wider rex86 translation for real time
+(the x87, REP strings) is prioritised by per-scene measurements with the wait loops taken out.
 
 ## 1. State — **on hold** (2026-08-28)
 

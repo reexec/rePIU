@@ -2,6 +2,7 @@
 
 #include "repiu/sound/ymz280b_device.h"
 #include "repiu/sound/ymz280b_sample_rom.h"
+#include "repiu/runtime/execution_model.h"
 
 #include <SDL3/SDL.h>
 
@@ -169,7 +170,77 @@ struct Ymz280bAudioOut::Impl
     std::atomic<std::uint64_t> key_ons{0};
     std::atomic<std::uint64_t> non_silent_samples{0};
     std::atomic<std::int32_t> peak{0};
+
+    std::vector<std::int16_t> block;
+
+    std::chrono::milliseconds Step();
 };
+
+// One block into the stream: what the worker's loop did once. The answer is how
+// long to wait before the next step, zero for "step again". Issue #64: the
+// worker thread repeats it, or on one thread the host turn does (Pump).
+std::chrono::milliseconds Ymz280bAudioOut::Impl::Step()
+{
+    const int queued = SDL_GetAudioStreamQueued(stream);
+    if (queued >= static_cast<int>(kMaxQueuedFrames) * kBytesPerFrame)
+    {
+        return std::chrono::milliseconds(2);
+    }
+
+    std::vector<sound::Ymz280bDevice::KeyOnEvent> key_on_events;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        device.Generate(block.data(), kFramesPerBlock);
+        key_on_events = device.TakeKeyOnEvents();
+        non_silent_samples.store(
+            device.non_silent_sample_count());
+        peak.store(device.peak_amplitude());
+    }
+
+    for (const auto& event : key_on_events)
+    {
+        std::fprintf(stderr,
+                     "[repiu-ymz] keyon voice=%d mode=%s start=0x%06X "
+                     "stop=0x%06X rate=%uHz level=%d pan=%d loop=%s\n",
+                     event.voice,
+                     event.mode == sound::Ymz280bDevice::kModeAdpcm
+                         ? "ADPCM"
+                         : (event.mode == sound::Ymz280bDevice::kModePcm8
+                                ? "PCM8"
+                                : "PCM16"),
+                     event.start_byte_address,
+                     event.stop_byte_address,
+                     event.sample_rate_hz,
+                     event.level,
+                     event.pan,
+                     event.looping ? "yes" : "no");
+    }
+
+    if (volume_scale != 1.0F)
+    {
+        for (std::int16_t& sample : block)
+        {
+            const float scaled =
+                static_cast<float>(sample) * volume_scale;
+            sample = static_cast<std::int16_t>(
+                scaled > 32767.0F ? 32767.0F
+                                  : (scaled < -32768.0F ? -32768.0F
+                                                        : scaled));
+        }
+    }
+
+    capture.Append(block.data(), block.size());
+
+    if (!SDL_PutAudioStreamData(
+            stream, block.data(),
+            static_cast<int>(block.size() * sizeof(std::int16_t))))
+    {
+        std::fprintf(stderr, "[repiu-ymz] SDL queue failed: %s\n",
+                     SDL_GetError());
+        return std::chrono::milliseconds(5);
+    }
+    return std::chrono::milliseconds(0);
+}
 
 Ymz280bAudioOut::Ymz280bAudioOut() : impl_(std::make_unique<Impl>()) {}
 Ymz280bAudioOut::~Ymz280bAudioOut() { Close(); }
@@ -229,72 +300,21 @@ bool Ymz280bAudioOut::Open(const std::filesystem::path& rom_zip_path)
     }
 
     impl_->shutdown = false;
-    impl_->worker = std::thread([this]() {
-        std::vector<std::int16_t> block(
-            static_cast<std::size_t>(kFramesPerBlock) * 2U);
-        while (!impl_->shutdown.load())
-        {
-            const int queued = SDL_GetAudioStreamQueued(impl_->stream);
-            if (queued >= static_cast<int>(kMaxQueuedFrames) * kBytesPerFrame)
+    impl_->block.assign(static_cast<std::size_t>(kFramesPerBlock) * 2U, 0);
+    // Issue #64: on one thread the host turn pumps the stream instead.
+    if (!runtime::execution_model::RunsHostOnOneThread())
+    {
+        impl_->worker = std::thread([this]() {
+            while (!impl_->shutdown.load())
             {
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
-                continue;
-            }
-
-            std::vector<sound::Ymz280bDevice::KeyOnEvent> key_on_events;
-            {
-                std::lock_guard<std::mutex> lock(impl_->mutex);
-                impl_->device.Generate(block.data(), kFramesPerBlock);
-                key_on_events = impl_->device.TakeKeyOnEvents();
-                impl_->non_silent_samples.store(
-                    impl_->device.non_silent_sample_count());
-                impl_->peak.store(impl_->device.peak_amplitude());
-            }
-
-            for (const auto& event : key_on_events)
-            {
-                std::fprintf(stderr,
-                             "[repiu-ymz] keyon voice=%d mode=%s start=0x%06X "
-                             "stop=0x%06X rate=%uHz level=%d pan=%d loop=%s\n",
-                             event.voice,
-                             event.mode == sound::Ymz280bDevice::kModeAdpcm
-                                 ? "ADPCM"
-                                 : (event.mode == sound::Ymz280bDevice::kModePcm8
-                                        ? "PCM8"
-                                        : "PCM16"),
-                             event.start_byte_address,
-                             event.stop_byte_address,
-                             event.sample_rate_hz,
-                             event.level,
-                             event.pan,
-                             event.looping ? "yes" : "no");
-            }
-
-            if (impl_->volume_scale != 1.0F)
-            {
-                for (std::int16_t& sample : block)
+                const std::chrono::milliseconds wait = impl_->Step();
+                if (wait.count() != 0)
                 {
-                    const float scaled =
-                        static_cast<float>(sample) * impl_->volume_scale;
-                    sample = static_cast<std::int16_t>(
-                        scaled > 32767.0F ? 32767.0F
-                                          : (scaled < -32768.0F ? -32768.0F
-                                                                : scaled));
+                    std::this_thread::sleep_for(wait);
                 }
             }
-
-            impl_->capture.Append(block.data(), block.size());
-
-            if (!SDL_PutAudioStreamData(
-                    impl_->stream, block.data(),
-                    static_cast<int>(block.size() * sizeof(std::int16_t))))
-            {
-                std::fprintf(stderr, "[repiu-ymz] SDL queue failed: %s\n",
-                             SDL_GetError());
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
-            }
-        }
-    });
+        });
+    }
 
     SDL_ResumeAudioStreamDevice(impl_->stream);
     impl_->ready = true;
@@ -325,6 +345,24 @@ void Ymz280bAudioOut::Close()
         impl_->audio_subsystem_open = false;
     }
     impl_->capture.Close();
+}
+
+// Issue #64. A bounded number of blocks, so one turn cannot run long; the
+// queue ceiling is reached in a few.
+void Ymz280bAudioOut::Pump()
+{
+    constexpr int kStepsPerPump = 16;
+    if (!impl_->ready.load() || impl_->worker.joinable())
+    {
+        return;
+    }
+    for (int step = 0; step < kStepsPerPump; ++step)
+    {
+        if (impl_->Step().count() != 0)
+        {
+            return;
+        }
+    }
 }
 
 bool Ymz280bAudioOut::available() const { return impl_->ready.load(); }

@@ -156,7 +156,7 @@ int main()
 * Linux 전용 코드는 `src/platform/linux/` 아래에 둔다. i386과 x86-64가 함께 쓰는 코드만 이 디렉터리에 두고, 아키텍처에 따라 갈리는 코드는 `src/platform/linux/x86/`, `src/platform/linux/x64/`에 둔다. 아키텍처 파일은 첫머리에서 `#error`로 자기 아키텍처를 확인한다. 공개 헤더도 같은 규칙으로 `include/repiu/platform/linux/`, `include/repiu/platform/linux/x86/`, `include/repiu/platform/linux/x64/`에 둔다.
 * Web 전용 코드는 `src/platform/web/` 아래에 둔다.
 * 엔진·런타임·HLE·도구 디렉터리에는 플랫폼·아키텍처 하위 디렉터리를 두지 않는다. OS에 의존하는 부분은 플랫폼 계층의 함수로 떼어 내고(`include/repiu/platform/`의 계약, `src/platform/<OS>/`의 구현), 플랫폼 계층은 엔진의 타입을 쓰지 않는다.
-* 엔진에서 실행 모델(`direct`, `cache`)에 따라 다른 구현은 공용 파일 옆에 `<이름>_direct.cpp`, `<이름>_cache.cpp`로 두고, 첫머리에서 `#error`로 자기 아키텍처를 확인한다. 공용 코드는 `include/repiu/runtime/execution_model.h`의 함수로 묻는다.
+* 엔진에서 실행 모델(`direct`, `cache`, `emulated`)에 따라 다른 구현은 공용 파일 옆에 `<이름>_direct.cpp`, `<이름>_cache.cpp`, `<이름>_emulated.cpp`로 둔다. `direct`·`cache` 파일은 첫머리에서 `#error`로 자기 아키텍처를 확인하고, `emulated` 파일은 호스트 CPU를 가리지 않으므로 확인하지 않는다. 공용 코드는 `include/repiu/runtime/execution_model.h`의 함수로 묻는다.
 * 헤더에서 플랫폼을 고르는 `#if`는 플랫폼 헤더(`include/repiu/platform/`)의 선택 지점에만 두며, 그 안에는 `#include`만 둔다.
 * 예외: Win32의 예외 진입과 종료 복구의 vectored handler(`execution_trampoline.cpp`의 `#if defined(_WIN32)` 블록, `exception_rescue_win32.cpp`)는 엔진의 상태를 쥐고 있어 엔진에 남아 있다. 플랫폼 계층의 콜백으로 바꾸는 별도 작업 전까지 같은 모양의 Win32 코드를 엔진에 더하지 않는다.
 
@@ -167,7 +167,7 @@ int main()
 * Put Linux-specific code under `src/platform/linux/`. Only code shared by i386 and x86-64 stays in that directory; code that differs by architecture goes in `src/platform/linux/x86/` or `src/platform/linux/x64/`. Architecture files check their own architecture with `#error` at the top. Public headers follow the same rule under `include/repiu/platform/linux/`, `include/repiu/platform/linux/x86/` and `include/repiu/platform/linux/x64/`.
 * Put Web-specific code under `src/platform/web/`.
 * The engine, runtime, HLE and tool directories have no platform or architecture subdirectories. What depends on the OS is taken out into functions of the platform layer (contracts in `include/repiu/platform/`, implementations in `src/platform/<OS>/`), and the platform layer uses none of the engine's types.
-* In the engine, implementations that differ by execution model (`direct`, `cache`) sit next to their shared file as `<name>_direct.cpp` and `<name>_cache.cpp` and check their own architecture with `#error` at the top. Shared code asks through the functions of `include/repiu/runtime/execution_model.h`.
+* In the engine, implementations that differ by execution model (`direct`, `cache`, `emulated`) sit next to their shared file as `<name>_direct.cpp`, `<name>_cache.cpp` and `<name>_emulated.cpp`. The `direct` and `cache` files check their own architecture with `#error` at the top; the `emulated` files run on any host CPU and do not. Shared code asks through the functions of `include/repiu/runtime/execution_model.h`.
 * A `#if` that chooses a platform in a header exists only at the selection points of platform headers (`include/repiu/platform/`), with nothing but `#include` inside.
 * The exception: Win32's exception entry and the shutdown recovery's vectored handlers (the `#if defined(_WIN32)` blocks of `execution_trampoline.cpp`, and `exception_rescue_win32.cpp`) hold engine state and remain in the engine. Until the separate task that turns them into callbacks of the platform layer, add no more Win32 code of that shape to the engine.
 

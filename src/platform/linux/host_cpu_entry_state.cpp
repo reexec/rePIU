@@ -8,7 +8,6 @@
 
 #if defined(__i386__) || defined(__x86_64__)
 #include <cpuid.h>
-#include <xmmintrin.h>
 #endif
 
 namespace repiu::platform
@@ -25,6 +24,7 @@ HostCpuEntryState ReadHostCpuEntryState()
     std::uint16_t gs = 0;
     std::uint16_t ss = 0;
     std::uint16_t control_word = 0;
+    std::uint32_t mxcsr = 0;
     __asm__ volatile("movw %%cs, %0" : "=r"(cs));
     __asm__ volatile("movw %%ds, %0" : "=r"(ds));
     __asm__ volatile("movw %%es, %0" : "=r"(es));
@@ -32,6 +32,10 @@ HostCpuEntryState ReadHostCpuEntryState()
     __asm__ volatile("movw %%gs, %0" : "=r"(gs));
     __asm__ volatile("movw %%ss, %0" : "=r"(ss));
     __asm__ volatile("fnstcw %0" : "=m"(control_word));
+    // Inline assembly rather than _mm_getcsr, which needs -msse and so does
+    // not compile in the i386 build; the instruction itself is on every CPU
+    // the host runs on.
+    __asm__ volatile("stmxcsr %0" : "=m"(mxcsr));
     state.cs = cs;
     state.ds = ds;
     state.es = es;
@@ -39,7 +43,7 @@ HostCpuEntryState ReadHostCpuEntryState()
     state.gs = gs;
     state.ss = ss;
     state.x87_control_word = control_word;
-    state.mxcsr = _mm_getcsr();
+    state.mxcsr = mxcsr;
     state.valid = true;
 #endif
     return state;

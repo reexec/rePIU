@@ -1,6 +1,7 @@
 #include "repiu/engine/cd_audio_wave_out.h"
 
 #include "repiu/media/chd_cd_image.h"
+#include "repiu/runtime/execution_model.h"
 
 #include <SDL3/SDL.h>
 
@@ -45,8 +46,11 @@ struct CdAudioWaveOut::Impl
     // decoded a buffer for is no longer the current one.
     std::atomic<std::uint32_t> generation{0};
     std::string message;
+    std::vector<std::uint8_t> buffer;
 
-    // Worker thread only.
+    std::chrono::milliseconds Step();
+
+    // Step only: the worker thread, or the host turn on one thread.
     std::uint32_t ComputeAudiblePosition() const
     {
         if (stream == nullptr)
@@ -61,6 +65,96 @@ struct CdAudioWaveOut::Impl
         return queued > begin + pending_frames ? queued - pending_frames : begin;
     }
 };
+
+// One buffer into the stream: what the worker's loop did once. The answer is how
+// long to wait before the next step, zero for "step again". Issue #64: the
+// worker thread repeats it, or on one thread the host turn does (Pump).
+std::chrono::milliseconds CdAudioWaveOut::Impl::Step()
+{
+    worker_iterations.fetch_add(1, std::memory_order_relaxed);
+    const bool active = playing.load() && !paused.load();
+    if (active)
+    {
+        audible_lba = ComputeAudiblePosition();
+        // An empty stream while frames remain means the device ran dry:
+        // the music itself gapped, which the position alone would not
+        // show.
+        if (SDL_GetAudioStreamQueued(stream) <= 0 &&
+            queued_lba.load() < end_lba.load())
+        {
+            underruns.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    if (!active)
+    {
+        return std::chrono::milliseconds(5);
+    }
+    if (SDL_GetAudioStreamQueued(stream) >=
+        static_cast<int>(kSectorBytes * kSectorsPerBuffer *
+                         kQueuedBufferCount))
+    {
+        return std::chrono::milliseconds(2);
+    }
+    // Decoding a buffer takes long enough that Play/Stop/Seek can land
+    // mid-iteration. The generation stamp lets the commit below drop a
+    // buffer that belongs to a run the caller has already replaced.
+    const std::uint32_t run_generation = generation.load();
+    const std::uint32_t begin = queued_lba.load();
+    if (begin >= end_lba.load())
+    {
+        // Everything is queued, but playback is not over until the
+        // stream drains. Reporting "stopped" here would cut the tail.
+        if (SDL_GetAudioStreamQueued(stream) <= 0)
+        {
+            frozen_lba = end_lba.load();
+            playing = false;
+            return std::chrono::milliseconds(0);
+        }
+        return std::chrono::milliseconds(2);
+    }
+    const std::uint32_t sectors = std::min(
+        kSectorsPerBuffer, end_lba.load() - begin);
+    bool read = true;
+    for (std::uint32_t sector = 0; sector < sectors; ++sector)
+    {
+        std::uint8_t* pcm = buffer.data() +
+            static_cast<std::size_t>(sector) * kSectorBytes;
+        if (!image.ReadRawSector(begin + sector, pcm, kSectorBytes))
+        {
+            read = false;
+            break;
+        }
+        for (std::uint32_t byte = 0; byte < kSectorBytes; byte += 2U)
+        {
+            std::swap(pcm[byte], pcm[byte + 1U]);
+        }
+    }
+    if (!read)
+    {
+        message = image.message();
+        frozen_lba = begin;
+        playing = false;
+        return std::chrono::milliseconds(0);
+    }
+    if (generation.load() != run_generation || !playing.load())
+    {
+        return std::chrono::milliseconds(0);
+    }
+    if (!SDL_PutAudioStreamData(stream, buffer.data(),
+                                sectors * kSectorBytes))
+    {
+        message = std::string("SDL CD-DA queue failed: ") +
+            SDL_GetError();
+        frozen_lba = begin;
+        playing = false;
+        return std::chrono::milliseconds(0);
+    }
+    if (generation.load() == run_generation)
+    {
+        queued_lba = begin + sectors;
+    }
+    return std::chrono::milliseconds(0);
+}
 
 CdAudioWaveOut::CdAudioWaveOut() : impl_(std::make_unique<Impl>()) {}
 CdAudioWaveOut::~CdAudioWaveOut() { Close(); }
@@ -92,104 +186,41 @@ bool CdAudioWaveOut::Open(const std::filesystem::path& chd_path)
         return false;
     }
     impl_->shutdown = false;
-    impl_->worker = std::thread([this]() {
-        std::vector<std::uint8_t> data(kSectorBytes * kSectorsPerBuffer);
-        while (!impl_->shutdown.load())
-        {
-            impl_->worker_iterations.fetch_add(1, std::memory_order_relaxed);
-            const bool active =
-                impl_->playing.load() && !impl_->paused.load();
-            if (active)
+    impl_->buffer.assign(kSectorBytes * kSectorsPerBuffer, 0U);
+    // Issue #64: on one thread the host turn pumps the stream instead.
+    if (!runtime::execution_model::RunsHostOnOneThread())
+    {
+        impl_->worker = std::thread([this]() {
+            while (!impl_->shutdown.load())
             {
-                impl_->audible_lba = impl_->ComputeAudiblePosition();
-                // An empty stream while frames remain means the device ran dry:
-                // the music itself gapped, which the position alone would not
-                // show.
-                if (SDL_GetAudioStreamQueued(impl_->stream) <= 0 &&
-                    impl_->queued_lba.load() < impl_->end_lba.load())
+                const std::chrono::milliseconds wait = impl_->Step();
+                if (wait.count() != 0)
                 {
-                    impl_->underruns.fetch_add(1, std::memory_order_relaxed);
+                    std::this_thread::sleep_for(wait);
                 }
             }
-            if (!active)
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                continue;
-            }
-            if (SDL_GetAudioStreamQueued(impl_->stream) >=
-                static_cast<int>(kSectorBytes * kSectorsPerBuffer *
-                                 kQueuedBufferCount))
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
-                continue;
-            }
-            // Decoding a buffer takes long enough that Play/Stop/Seek can land
-            // mid-iteration. The generation stamp lets the commit below drop a
-            // buffer that belongs to a run the caller has already replaced.
-            const std::uint32_t generation = impl_->generation.load();
-            const std::uint32_t begin = impl_->queued_lba.load();
-            if (begin >= impl_->end_lba.load())
-            {
-                // Everything is queued, but playback is not over until the
-                // stream drains. Reporting "stopped" here would cut the tail.
-                if (SDL_GetAudioStreamQueued(impl_->stream) <= 0)
-                {
-                    impl_->frozen_lba = impl_->end_lba.load();
-                    impl_->playing = false;
-                }
-                else
-                {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
-                }
-                continue;
-            }
-            const std::uint32_t sectors = std::min(
-                kSectorsPerBuffer, impl_->end_lba.load() - begin);
-            bool read = true;
-            for (std::uint32_t sector = 0; sector < sectors; ++sector)
-            {
-                std::uint8_t* pcm = data.data() +
-                    static_cast<std::size_t>(sector) * kSectorBytes;
-                if (!impl_->image.ReadRawSector(begin + sector, pcm,
-                                                kSectorBytes))
-                {
-                    read = false;
-                    break;
-                }
-                for (std::uint32_t byte = 0; byte < kSectorBytes; byte += 2U)
-                {
-                    std::swap(pcm[byte], pcm[byte + 1U]);
-                }
-            }
-            if (!read)
-            {
-                impl_->message = impl_->image.message();
-                impl_->frozen_lba = begin;
-                impl_->playing = false;
-                continue;
-            }
-            if (impl_->generation.load() != generation ||
-                !impl_->playing.load())
-            {
-                continue;
-            }
-            if (!SDL_PutAudioStreamData(impl_->stream, data.data(),
-                                        sectors * kSectorBytes))
-            {
-                impl_->message = std::string("SDL CD-DA queue failed: ") +
-                    SDL_GetError();
-                impl_->frozen_lba = begin;
-                impl_->playing = false;
-                continue;
-            }
-            if (impl_->generation.load() == generation)
-            {
-                impl_->queued_lba = begin + sectors;
-            }
-        }
-    });
+        });
+    }
     impl_->message = "SDL3 CD-DA audio stream ready";
     return true;
+}
+
+// Issue #64. A bounded number of buffers, so one turn cannot run long; the
+// queue ceiling is reached in a few.
+void CdAudioWaveOut::Pump()
+{
+    constexpr int kStepsPerPump = 8;
+    if (impl_->stream == nullptr || impl_->worker.joinable())
+    {
+        return;
+    }
+    for (int step = 0; step < kStepsPerPump; ++step)
+    {
+        if (impl_->Step().count() != 0)
+        {
+            return;
+        }
+    }
 }
 
 bool CdAudioWaveOut::Play(std::uint32_t start_lba, std::uint32_t frame_count)

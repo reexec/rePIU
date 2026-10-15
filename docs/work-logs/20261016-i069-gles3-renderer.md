@@ -94,7 +94,7 @@ pumpit8 attract, vsync OFF(`REPIU_GLIDE_SWAP_INTERVAL=0`), `REPIU_GLIDE_FRAME_RA
 
 ### 남은 것
 
-* 사용자 플레이 확인(Windows): 입력, 소리, OSD(Tab), 창 크기 변경·전체 화면·keep-aspect, 후처리 전환.
+* ~~사용자 플레이 확인(Windows)~~ — 2026-10-16 사용자 확인: 정상.
 * 단계 4: 브라우저 페이지(Worker, OffscreenCanvas의 WebGL2 문맥은 `antialias:false`, `depth:false`면 됨 — 깊이는 FBO에 있음).
 
 ---
@@ -202,7 +202,6 @@ rechecked on Win32 Debug and Release only; it is three lines of engine code with
 
 ### Remaining
 
-* A play check by the user (Windows): input, sound, the OSD (Tab), window resizing, fullscreen and keep-aspect, switching
-  post-process shaders.
+* ~~A play check by the user (Windows)~~ — confirmed by the user on 2026-10-16: it works.
 * Phase 4: the browser page (the OffscreenCanvas WebGL2 context can be `antialias:false`, `depth:false`: depth lives in
   the FBOs).

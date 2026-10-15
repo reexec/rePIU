@@ -110,6 +110,12 @@ Glide 랑데부가 모든 경로에서 즉시 실행되는지는 교착 방지 �
 ### 남은 것
 
 * 이 PC에서 타이틀·데모 플레이 도달(속도 문제), 코인·시작 입력에 대한 게임의 반응.
+* **종료 중 힙 손상 크래시 — [#65](https://github.com/reexec/rePIU/issues/65).** 사용자 실행(`emulated`, 음악 뒤
+  종료)이 `ThreadContext` 파괴 중 `ntdll!RtlFreeHeap`에서 쓰기 접근 위반으로 끝났습니다. 같은 조건의 재현 시도
+  (`emulated` 시간 제한 5회·창 닫기 1회, `direct` 시간 제한 4회·창 닫기 2회)에서는 나지 않았고, 게스트가 1 MB 아래
+  호스트 페이지를 건드린다는 가설은 측정으로 기각했습니다. 다음 작업에서 손상 지점을 잡습니다.
+* `direct` 1회가 56초에 Task 736 모양(타이머 ISR 중첩으로 게스트 스택이 넘침, `0x0402AB87` 프레임 반복)으로 끝났습니다.
+  호스트 차례는 규칙을 그대로 옮겼으므로 이 작업의 회귀는 아닌 것으로 봅니다(추정). #65에서 함께 봅니다.
 * 장면별 "대기 루프를 뺀" 필요 처리량 측정(위 해석의 확인).
 * 단계 2(Emscripten 빌드, Node 헤드리스 실행)부터는 각자 작업 지시로.
 
@@ -239,6 +245,14 @@ own, and phase 1 is treated as working.
 ### Remaining
 
 * Reaching the title and the demo play on this PC (the speed problem), and the game's response to coin and start input.
+* **A heap-corruption crash in teardown — [#65](https://github.com/reexec/rePIU/issues/65).** A user run (`emulated`,
+  ended after the music) ended in a write access violation in `ntdll!RtlFreeHeap` while `ThreadContext` was destroyed.
+  Reproductions under the same conditions (`emulated`: five timeouts and one window close; `direct`: four timeouts and two
+  closes) did not crash, and the guess that the guest touches host pages below 1 MB was ruled out by measurement. The
+  next task catches the corrupting write.
+* One `direct` run ended at 56 s in the shape of Task 736 (the timer ISR nesting until the guest stack overflows,
+  `0x0402AB87` frames repeating). The host turn moved its rules unchanged, so this is taken not to be a regression of this
+  work (inferred); #65 looks at it too.
 * Measuring the per-scene need with the wait loops taken out (to confirm the inference above).
 * Phase 2 on (the Emscripten build, the headless run under Node), each with its own work order.
 

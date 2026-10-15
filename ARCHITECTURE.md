@@ -4877,7 +4877,8 @@ chose no driver).
   rex86 CPU 코어가 게스트를 실행하고(issue #61: 웹과 ARM 호스트용, Win32에서
   `-DREPIU_EXECUTION_MODEL_OVERRIDE=emulated`로 개발용 빌드), `none`은 게스트를 실행하지 않습니다(지금의 웹
   빌드). 공용 코드는 `include/repiu/runtime/execution_model.h`의 함수
-  (`RunsGuestBytesDirectly`, `RunsLongModeCodeCache`, `RunsGuestOnEmulatedCpu`, `LongModeReturnThunkAddress`,
+  (`RunsGuestBytesDirectly`, `RunsLongModeCodeCache`, `RunsGuestOnEmulatedCpu`, `RunsHostOnOneThread`,
+  `LongModeReturnThunkAddress`,
   `InjectsTicksDuringSwapWait`)로 묻고, 구현은 `src/runtime/execution_model_{direct,cache,emulated,none}.cpp`입니다.
   CMake의 `REPIU_EXECUTION_MODEL`이 고릅니다.
 * **모델에 따라 다르고 엔진의 타입이 필요한 코드**는 공용 파일 옆에 `<이름>_direct.cpp`,
@@ -4891,6 +4892,26 @@ chose no driver).
 
   공용 파일에 남은 모델 분기는 `if (runtime::execution_model::RunsLongModeCodeCache())`로 감싼 같은
   코드입니다. 처리한 경계 뒤의 재개는 `ResumeHandledBoundary` 하나가 맡습니다.
+* **호스트 루프는 두 모양입니다(issue #64).** 호스트가 하는 일 한 번(Glide 명령 펌프, 이벤트, PIT tick 일정,
+  진행·정체 감시, 시간 제한, census)은 `src/engine/execution/host_turn.cpp`의 `HostTurn`입니다.
+  `direct`·`cache`는 게스트 스레드를 따로 띄우고 메인 스레드의 `PollThreadUntilExit`가 "호스트 차례 → 기다림"을
+  되풀이합니다. `emulated`는 `RunsHostOnOneThread()`가 참이라 게스트 스레드를 만들지 않습니다.
+  `RunGuestOnThisThread`가 게스트 스레드 프로시저를 메인 스레드에서 부르고, rex86 루프가 멈춤 사이에 다음 tick
+  기한이나 2 ms 상한이 되면 호스트 차례를 가집니다(`OneThreadHostLoop`). 오디오 출력 셋(YMZ280B, PIU10 MP3,
+  CD 오디오)과 입력 스크립트는 한 단계(`Step`)를 스레드가 되풀이하거나, 한 스레드에서는 호스트 차례가
+  `Pump()`로 부릅니다. HLE 쪽 대기는 `YieldToHost`로 하며, 한 스레드에서는 슬라이스를 끝냅니다. 브라우저의 단일
+  Worker가 이 모양을 그대로 씁니다([설계 #64](docs/design/20261015-i064-browser-host-single-thread-loop.md)).
+
+  ```mermaid
+  flowchart LR
+      subgraph threaded["direct · cache"]
+          G1["게스트 스레드"] -- "Glide 랑데부" --> M1["메인: HostTurn → 기다림"]
+          A1["오디오 워커 스레드: Step"]
+      end
+      subgraph one["emulated"]
+          R["rex86 슬라이스"] --> T["HostTurn + 오디오 Pump"] --> R
+      end
+  ```
 
 한 호스트에서만 만든 진단(`src/engine/telemetry/linux_x64_native_write_trace.cpp`, `aot_code_cache.cpp`의 스택
 쓰기 추적)은 디렉터리로 나누지 않고 그 자리에서 그 호스트에서만 빌드됩니다.
@@ -4923,7 +4944,7 @@ differs by host goes to one of two places.
   for development with `-DREPIU_EXECUTION_MODEL_OVERRIDE=emulated`), and `none` runs no guest (today's
   web build). Shared code asks through the functions of `include/repiu/runtime/execution_model.h`
   (`RunsGuestBytesDirectly`, `RunsLongModeCodeCache`, `RunsGuestOnEmulatedCpu`,
-  `LongModeReturnThunkAddress`, `InjectsTicksDuringSwapWait`), implemented in
+  `RunsHostOnOneThread`, `LongModeReturnThunkAddress`, `InjectsTicksDuringSwapWait`), implemented in
   `src/runtime/execution_model_{direct,cache,emulated,none}.cpp`. CMake's `REPIU_EXECUTION_MODEL` picks.
 * **Code that differs by model and needs the engine's types** sits next to its shared file as
   `<name>_direct.cpp`, `<name>_cache.cpp` and `<name>_emulated.cpp`.
@@ -4937,6 +4958,28 @@ differs by host goes to one of two places.
   The model branches left in shared files are the same code inside
   `if (runtime::execution_model::RunsLongModeCodeCache())`. The continuation after a handled boundary is
   one function, `ResumeHandledBoundary`.
+* **The host loop has two shapes (issue #64).** One turn of the host's work (the Glide command pump,
+  events, the PIT tick schedule, the progress and stall watch, the timeout, the censuses) is `HostTurn`
+  in `src/engine/execution/host_turn.cpp`. `direct` and `cache` start a guest thread of its own, and
+  the main thread's `PollThreadUntilExit` repeats "host turn, then wait". On `emulated`,
+  `RunsHostOnOneThread()` holds and no guest thread is made: `RunGuestOnThisThread` calls the guest
+  thread procedure on the main thread, and the rex86 loop takes a host turn between stops when the next
+  tick is due or 2 ms have passed (`OneThreadHostLoop`). The three audio outputs (YMZ280B, PIU10 MP3,
+  CD audio) and the input script have one `Step`, which a thread repeats, or which the host turn calls
+  through `Pump()` on one thread. HLE-side waits go through `YieldToHost`, which on one thread ends the
+  slice. The browser's single Worker uses this shape as it is
+  ([design #64](docs/design/20261015-i064-browser-host-single-thread-loop.md)).
+
+  ```mermaid
+  flowchart LR
+      subgraph threaded["direct · cache"]
+          G1["guest thread"] -- "Glide rendezvous" --> M1["main: HostTurn, then wait"]
+          A1["audio worker threads: Step"]
+      end
+      subgraph one["emulated"]
+          R["rex86 slices"] --> T["HostTurn + audio Pump"] --> R
+      end
+  ```
 
 A diagnostic built on one host (`src/engine/telemetry/linux_x64_native_write_trace.cpp`, the stack write
 trace in `aot_code_cache.cpp`) is not put in a directory; it is built where it is, on that host only.

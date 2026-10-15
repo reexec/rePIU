@@ -36,8 +36,11 @@ Task 492~495의 JAMMA 입력 timing, IRQ0 replay, 2P 숫자패드 별칭과 hist
   0절이 정본입니다. 네이티브 Windows에서 rex86 위의 `emulated` 실행 모델로 pumpitea가 타이틀과 데모 플레이까지
   나옵니다([설계](design/20261014-i061-emulated-execution-model.md)). 실행 규칙은 `dynamic` 백엔드의 HLE 경계 분류를
   그대로 씁니다. Windows 인터프리터는 약 9.3 MIPS이고, 실시간에는 약 75 MIPS가 필요한 것으로 추정합니다.
-  **다음:** 브라우저 호스트(단일 Worker, OPFS, WebGL2, AudioWorklet)와 rex86 번역 범위 확대(x87, REP 문자열),
-  장면별 프레임당 명령 측정.
+  **브라우저 호스트 — issue #64.** 단계 1(단일 스레드 호스트 루프)을 마쳤습니다: `emulated`는 게스트·Glide·tick·
+  오디오·입력을 한 스레드에서 번갈아 돌립니다([설계](design/20261015-i064-browser-host-single-thread-loop.md)).
+  타이틀·소리는 사용자 확인이 남아 있습니다.
+  **다음:** 단계 2(Emscripten 빌드, Node 헤드리스), 단계 3(GLES 3 / WebGL2 렌더러), 단계 4(페이지), 그리고 대기 루프를
+  뺀 장면별 처리량 측정과 rex86 번역 범위 확대(x87, REP 문자열).
 
 - **환경 변수 토글 정리 — 1~3번 묶음, 일회성 진단(#25), guarded segment(#30) 완료(2026-10-09).** 조사 결과와 전체
   목록은 [환경 변수 토글 목록](analysis/environment-toggle-inventory.md)이 정본입니다.
@@ -105,8 +108,12 @@ units in [`work-orders/`](work-orders/), and completed results and verification 
   [web port frontier](analysis/web-port-frontier.md) is the state of record. On native Windows, the `emulated` execution
   model on rex86 takes pumpitea to its title and demo play ([design](design/20261014-i061-emulated-execution-model.md)),
   running by the `dynamic` backend's HLE boundary classification. The Windows interpreter runs about 9.3 MIPS; real time
-  is estimated to need about 75 MIPS. **Next:** the browser host (single Worker, OPFS, WebGL2, AudioWorklet), wider rex86
-  translation (the x87, REP strings), and per-scene instructions-per-frame measurements.
+  is estimated to need about 75 MIPS. **The browser host -- issue #64.** Phase 1 (the single-threaded host loop) is
+  done: `emulated` runs the guest, Glide, ticks, audio and input on one thread, taking turns
+  ([design](design/20261015-i064-browser-host-single-thread-loop.md)); the title and the sound are left for the user to
+  confirm. **Next:** phase 2 (the Emscripten build, headless under Node), phase 3 (the GLES 3 / WebGL2 renderer),
+  phase 4 (the page), per-scene throughput measured with the wait loops taken out, and wider rex86 translation (the
+  x87, REP strings).
 
 - **Environment toggle cleanup -- groups 1 to 3, the one-off diagnostics (#25) and the guarded segment switches (#30) done (2026-10-09).** The
   survey and full list live in the [environment toggle inventory](analysis/environment-toggle-inventory.md).

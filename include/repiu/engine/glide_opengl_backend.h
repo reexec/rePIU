@@ -10,6 +10,7 @@
 #include "repiu/engine/gl_api.h"
 #include "repiu/engine/glide_draw_batch.h"
 #include "repiu/engine/glide_framebuffer_pair.h"
+#include "repiu/engine/glide_host_window.h"
 #include "repiu/engine/glide_gate_timing.h"
 #include "repiu/engine/glide_gl_error_policy.h"
 #include "repiu/engine/glide_letterbox.h"
@@ -236,7 +237,7 @@ public:
     bool SetDitherMode(std::uint32_t mode);
     void Close();
 
-    bool is_open() const { return window_ != nullptr || dummy_mode_; }
+    bool is_open() const { return host_window_ != nullptr || dummy_mode_; }
     bool is_dummy() const { return dummy_mode_; }
     // Task 769: where the picture sits in the window, in drawable pixels.
     const GlideLetterboxRect& content_rect() const { return content_rect_; }
@@ -547,8 +548,8 @@ private:
     std::uint64_t rendezvous_spin_host_hit_ = 0;
     std::uint64_t rendezvous_spin_host_miss_ = 0;
 
-    void* window_ = nullptr;
-    void* render_context_ = nullptr;
+    // Issue #72: the window and GL context, SDL's or the browser canvas.
+    std::unique_ptr<GlideHostWindow> host_window_;
 
     // TMU state
     std::uint32_t tmu_s_clamp_ = 0; // GR_TEXTURECLAMP_WRAP

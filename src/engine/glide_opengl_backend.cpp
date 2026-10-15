@@ -866,7 +866,7 @@ bool GlideOpenGlBackend::WaitAndPumpHostCommands(
 }
 
 bool GlideOpenGlBackend::ApplyWindowScale(std::uint32_t scale) {
-  if (window_ == nullptr || scale < 1U || scale > 4U ||
+  if (host_window_ == nullptr || scale < 1U || scale > 4U ||
       logical_width_ >
           static_cast<std::uint32_t>(std::numeric_limits<int>::max()) / scale ||
       logical_height_ >
@@ -874,14 +874,13 @@ bool GlideOpenGlBackend::ApplyWindowScale(std::uint32_t scale) {
     return false;
   }
 
-  SDL_Window *window = static_cast<SDL_Window *>(window_);
   // Task 769: a fullscreen window has no size of its own to scale.
-  if ((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0U) {
+  if (host_window_->IsFullscreen()) {
     return false;
   }
   const int width = static_cast<int>(logical_width_ * scale);
   const int height = static_cast<int>(logical_height_ * scale);
-  if (!SDL_SetWindowSize(window, width, height)) {
+  if (!host_window_->SetSize(width, height)) {
     message_ = std::string("SDL3 window scale failed: ") + SDL_GetError();
     return false;
   }
@@ -896,13 +895,12 @@ bool GlideOpenGlBackend::ApplyWindowScale(std::uint32_t scale) {
 }
 
 void GlideOpenGlBackend::ApplyDrawableViewport() {
-  if (window_ == nullptr || render_context_ == nullptr || dummy_mode_) {
+  if (host_window_ == nullptr || dummy_mode_) {
     return;
   }
   int drawable_width = 0;
   int drawable_height = 0;
-  if (!SDL_GetWindowSizeInPixels(static_cast<SDL_Window *>(window_),
-                                 &drawable_width, &drawable_height) ||
+  if (!host_window_->DrawableSize(&drawable_width, &drawable_height) ||
       drawable_width <= 0 || drawable_height <= 0) {
     return;
   }
@@ -940,7 +938,7 @@ void GlideOpenGlBackend::ApplyDrawableViewport() {
 }
 
 void GlideOpenGlBackend::ToggleFullscreen() {
-  if (window_ == nullptr || dummy_mode_) {
+  if (host_window_ == nullptr || dummy_mode_) {
     return;
   }
   // Issue #45: an operator's toggle, so the new state is stored.
@@ -948,20 +946,17 @@ void GlideOpenGlBackend::ToggleFullscreen() {
 }
 
 bool GlideOpenGlBackend::IsFullscreen() const {
-  return window_ != nullptr &&
-         (SDL_GetWindowFlags(static_cast<SDL_Window *>(window_)) &
-          SDL_WINDOW_FULLSCREEN) != 0U;
+  return host_window_ != nullptr && host_window_->IsFullscreen();
 }
 
 bool GlideOpenGlBackend::SetFullscreen(bool fullscreen, bool report) {
-  if (window_ == nullptr || dummy_mode_) {
+  if (host_window_ == nullptr || dummy_mode_) {
     return false;
   }
   // No fullscreen mode is ever set on this window, so SDL3 makes this a
   // borderless window at the desktop resolution: the display mode never
   // changes. The resulting pixel-size event re-runs ApplyDrawableViewport.
-  if (!SDL_SetWindowFullscreen(static_cast<SDL_Window *>(window_),
-                               fullscreen)) {
+  if (!host_window_->SetFullscreen(fullscreen)) {
     fprintf(stderr, "[repiu-glide] fullscreen toggle failed: %s\n",
             SDL_GetError());
     return false;
@@ -1137,8 +1132,7 @@ void GlideOpenGlBackend::RecordPresentedFrame() {
                 presented_frame_span_milliseconds()));
   }
   const std::string window_title = BuildWindowTitle(frames_per_second);
-  if (!SDL_SetWindowTitle(static_cast<SDL_Window *>(window_),
-                          window_title.c_str())) {
+  if (host_window_ != nullptr && !host_window_->SetTitle(window_title.c_str())) {
     fprintf(stderr, "[repiu-live-debug] SDL3 window title update failed: %s\n",
             SDL_GetError());
   }
@@ -1188,64 +1182,21 @@ bool GlideOpenGlBackend::OpenWindowed(std::uint32_t logical_width,
 
   glide_swap_interval_policy_.wsl_d3d12_selected =
       repiu::platform::SelectWslD3d12Driver();
-  if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
-    dummy_mode_ = true;
-    logical_width_ = logical_width;
-    logical_height_ = logical_height;
-    message_ =
-        std::string("Glide dummy fallback (SDL video): ") + SDL_GetError();
-    return true;
-  }
-  SDL_GL_ResetAttributes();
-  SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-  SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
-  SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
-  SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
-  SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
-  // Issue #69: the depth buffer belongs to the offscreen pair; the window's
-  // framebuffer only receives finished pictures.
-  SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
-  const repiu::platform::GlContextRequest context_request =
-      repiu::platform::RequestedGlContext();
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
-                      context_request.es ? SDL_GL_CONTEXT_PROFILE_ES
-                                         : SDL_GL_CONTEXT_PROFILE_CORE);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, context_request.major);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, context_request.minor);
-  const std::string window_title = BuildWindowTitle(0.0);
-  SDL_Window *window =
-      SDL_CreateWindow(window_title.c_str(), window_width, window_height,
-                       SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
-  if (window == nullptr) {
-    dummy_mode_ = true;
-    logical_width_ = logical_width;
-    logical_height_ = logical_height;
-    message_ =
-        std::string("Glide dummy fallback (SDL window): ") + SDL_GetError();
-    SDL_QuitSubSystem(SDL_INIT_VIDEO);
-    return true;
-  }
-  SDL_GLContext render_context = SDL_GL_CreateContext(window);
-  if (render_context == nullptr) {
-    dummy_mode_ = true;
-    logical_width_ = logical_width;
-    logical_height_ = logical_height;
-    message_ =
-        std::string("Glide dummy fallback (SDL GL context): ") + SDL_GetError();
-    SDL_DestroyWindow(window);
-    SDL_QuitSubSystem(SDL_INIT_VIDEO);
-    return true;
-  }
-  if (!SDL_GL_MakeCurrent(window, render_context)) {
-    dummy_mode_ = true;
-    logical_width_ = logical_width;
-    logical_height_ = logical_height;
-    message_ =
-        std::string("Glide dummy fallback (SDL GL current): ") + SDL_GetError();
-    SDL_GL_DestroyContext(render_context);
-    SDL_DestroyWindow(window);
-    SDL_QuitSubSystem(SDL_INIT_VIDEO);
-    return true;
+  // Issue #72: SDL's window, or the browser page's canvas in a Worker.
+  {
+    std::unique_ptr<GlideHostWindow> window = CreateGlideHostWindow();
+    const std::string window_title = BuildWindowTitle(0.0);
+    std::string stage;
+    std::string detail;
+    if (!window->Open(window_title.c_str(), window_width, window_height,
+                      &stage, &detail)) {
+      dummy_mode_ = true;
+      logical_width_ = logical_width;
+      logical_height_ = logical_height;
+      message_ = "Glide dummy fallback (" + stage + "): " + detail;
+      return true;
+    }
+    host_window_ = std::move(window);
   }
   {
     std::string missing;
@@ -1255,10 +1206,7 @@ bool GlideOpenGlBackend::OpenWindowed(std::uint32_t logical_width,
       logical_height_ = logical_height;
       message_ = "Glide dummy fallback (OpenGL entry point missing: " +
                  missing + ")";
-      SDL_GL_MakeCurrent(window, nullptr);
-      SDL_GL_DestroyContext(render_context);
-      SDL_DestroyWindow(window);
-      SDL_QuitSubSystem(SDL_INIT_VIDEO);
+      host_window_.reset();
       return true;
     }
   }
@@ -1281,7 +1229,7 @@ bool GlideOpenGlBackend::OpenWindowed(std::uint32_t logical_width,
     renderer_identity = MakeGlRendererIdentity(
         renderer, reinterpret_cast<const char *>(glGetString(GL_VENDOR)),
         reinterpret_cast<const char *>(glGetString(GL_VERSION)),
-        SDL_GetCurrentVideoDriver(),
+        host_window_->VideoDriver().c_str(),
         glide_swap_interval_policy_.wsl_d3d12_selected);
     fprintf(stderr,
             "[repiu-glide] GL vendor/version/video driver/software: "
@@ -1292,7 +1240,6 @@ bool GlideOpenGlBackend::OpenWindowed(std::uint32_t logical_width,
             renderer_identity.software ? "true" : "false");
   }
 
-  window_ = window;
   // Task 761: the presentation toggle's initial value, then the OSD that can
   // flip it. On by default: unset and empty mean on, and only an explicit
   // `0`, `off` or `false` keeps the 565 decode path.
@@ -1316,7 +1263,8 @@ bool GlideOpenGlBackend::OpenWindowed(std::uint32_t logical_width,
   osd_ = std::make_unique<GlideOsd>();
   {
     std::string osd_message;
-    if (!osd_->Initialize(window, render_context,
+    if (!osd_->Initialize(host_window_->SdlWindow(),
+                          host_window_->SdlContext(),
                           ImGuiGlslVersion(gl_.es), &osd_message)) {
       fprintf(stderr, "[repiu-osd] disabled: %s\n", osd_message.c_str());
       osd_.reset();
@@ -1348,22 +1296,21 @@ bool GlideOpenGlBackend::OpenWindowed(std::uint32_t logical_width,
   }
   // Task 748: a scripted keyboard, if one was asked for.
   input_script_ = std::make_unique<SdlInputScriptPlayerHandle>();
-  if (!input_script_->player.StartFromEnvironment(SDL_GetWindowID(window))) {
+  if (!input_script_->player.StartFromEnvironment(
+          host_window_->SdlWindowId())) {
     input_script_.reset();
   }
   if (jamma_input_timeline_ != nullptr) {
     jamma_input_timeline_->ServeLiveReadsFromLatestState(input_script_ !=
                                                          nullptr);
   }
-  render_context_ = render_context;
   logical_width_ = logical_width;
   logical_height_ = logical_height;
-  // Task 433: the depth buffer is only requested when the guest asked for an
-  // auxiliary buffer, so report what was asked for *and* what the driver
-  // actually granted. A granted size of zero makes every depth call a no-op
-  // no matter what the vertices carry.
-  int granted_depth_bits = -1;
-  SDL_GL_GetAttribute(SDL_GL_DEPTH_SIZE, &granted_depth_bits);
+  // Task 433: the depth buffer is only made when the guest asked for an
+  // auxiliary buffer, so report what was asked for and what there is. Issue
+  // #69: it is the offscreen pair's depth24 renderbuffer, which a complete
+  // framebuffer always has.
+  const int granted_depth_bits = auxiliary_buffer_count != 0U ? 24 : 0;
   fprintf(stderr,
           "[repiu-live-debug] Glide depth buffer color-buffers/aux-buffers/"
           "requested-bits/granted-bits: %u/%u/%d/%d\n",
@@ -1379,10 +1326,10 @@ bool GlideOpenGlBackend::OpenWindowed(std::uint32_t logical_width,
       ReadGlideSwapInterval(&requested_interval);
   glide_swap_interval_policy_.requested_interval = requested_interval;
   glide_swap_interval_policy_.applied =
-      SDL_GL_SetSwapInterval(static_cast<int>(requested_interval));
+      host_window_->SetSwapInterval(static_cast<int>(requested_interval));
   int effective = 0;
   glide_swap_interval_policy_.effective_valid =
-      SDL_GL_GetSwapInterval(&effective);
+      host_window_->SwapInterval(&effective);
   glide_swap_interval_policy_.effective_interval =
       static_cast<std::int32_t>(effective);
   // Task 745. A refused interval used to leave the game unthrottled with
@@ -1395,11 +1342,7 @@ bool GlideOpenGlBackend::OpenWindowed(std::uint32_t logical_width,
                  error != nullptr ? error : "",
                  sizeof(glide_swap_interval_policy_.failure) - 1U);
   }
-  const SDL_DisplayID display = SDL_GetDisplayForWindow(window);
-  const SDL_DisplayMode *const mode =
-      display != 0U ? SDL_GetCurrentDisplayMode(display) : nullptr;
-  glide_swap_interval_policy_.refresh_rate_hz =
-      mode != nullptr ? static_cast<double>(mode->refresh_rate) : 0.0;
+  glide_swap_interval_policy_.refresh_rate_hz = host_window_->RefreshRateHz();
   const bool honoured = glide_swap_interval_policy_.applied &&
       (!glide_swap_interval_policy_.effective_valid ||
        glide_swap_interval_policy_.effective_interval == requested_interval);
@@ -1478,7 +1421,7 @@ bool GlideOpenGlBackend::OpenWindowed(std::uint32_t logical_width,
   gl_.bind_framebuffer(GL_FRAMEBUFFER, 0U);
   glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
   glClear(GL_COLOR_BUFFER_BIT);
-  SDL_GL_SwapWindow(window);
+  host_window_->Present();
   framebuffers_.BindDrawTarget();
   // Issue #45: the stored fullscreen choice, entered after the window has
   // its scaled size so leaving fullscreen returns to that window. Applying
@@ -1505,7 +1448,7 @@ void GlideOpenGlBackend::PumpEvents() {
     InvokeOnHostThread([this]() { PumpEvents(); });
     return;
   }
-  if (dummy_mode_ || window_ == nullptr) {
+  if (dummy_mode_ || host_window_ == nullptr) {
     return;
   }
   // Issue #64: on one thread the script has no thread of its own.
@@ -1922,7 +1865,7 @@ bool GlideOpenGlBackend::BufferSwapOnHostThread(std::uint32_t swap_interval,
       swap_timing != nullptr ? ReadGlideBufferSwapTimingCycles() : 0U;
   if (swap_timing != nullptr && swap_timing->sdl_interval_query_count == 0U) {
     int interval = 0;
-    const bool queried = SDL_GL_GetSwapInterval(&interval);
+    const bool queried = host_window_->SwapInterval(&interval);
     RecordGlideBufferSwapSdlInterval(swap_timing, queried,
                                      static_cast<std::int32_t>(interval));
   }
@@ -2052,7 +1995,7 @@ bool GlideOpenGlBackend::BufferSwapOnHostThread(std::uint32_t swap_interval,
   const std::uint64_t present_start_cycles =
       swap_timing != nullptr ? ReadGlideBufferSwapTimingCycles() : 0U;
   const auto present_begin = std::chrono::steady_clock::now();
-  const bool swapped = SDL_GL_SwapWindow(static_cast<SDL_Window *>(window_));
+  const bool swapped = host_window_->Present();
   const auto present_end = std::chrono::steady_clock::now();
   RestoreGameGlState();
   const std::uint64_t present_end_cycles =
@@ -3410,11 +3353,8 @@ void GlideOpenGlBackend::Close() {
     return;
   }
   try {
-    SDL_GLContext render_context =
-        reinterpret_cast<SDL_GLContext>(render_context_);
-    SDL_Window *window = static_cast<SDL_Window *>(window_);
-    if (render_context != nullptr) {
-      SDL_GL_MakeCurrent(window, render_context);
+    if (host_window_ != nullptr) {
+      host_window_->MakeCurrent();
       // Task 761: the OSD's GL objects belong to this context, so it goes
       // first, while the context is still current.
       if (osd_ != nullptr) {
@@ -3438,12 +3378,7 @@ void GlideOpenGlBackend::Close() {
       shader_.Shutdown();
       vertex_stream_.Shutdown();
       framebuffers_.Shutdown();
-      SDL_GL_MakeCurrent(window, nullptr);
-      SDL_GL_DestroyContext(render_context);
-    }
-    if (window != nullptr) {
-      SDL_DestroyWindow(window);
-      SDL_QuitSubSystem(SDL_INIT_VIDEO);
+      host_window_->Close();
     }
   } catch (const std::exception &e) {
     fprintf(stderr,
@@ -3456,8 +3391,7 @@ void GlideOpenGlBackend::Close() {
   }
   // Its destructor touches no GL, so this is safe with the context gone.
   post_process_.reset();
-  render_context_ = nullptr;
-  window_ = nullptr;
+  host_window_.reset();
   logical_width_ = 0;
   logical_height_ = 0;
   window_scale_ = 2U;

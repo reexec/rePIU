@@ -488,6 +488,9 @@ target_sources(repiu_exe
         src/engine/gl_unit_quad.cpp
         src/engine/glide_vertex_stream.cpp
         src/engine/glide_framebuffer_pair.cpp
+        # Issue #72: the window the backend draws into, SDL's or the page's.
+        src/engine/glide_host_window_sdl.cpp
+        src/engine/glide_host_window_browser.cpp
         src/engine/glide_osd.cpp
         src/engine/imgui_ui_scale.cpp
         src/engine/glide_post_process.cpp
@@ -608,7 +611,12 @@ if(REPIU_PLATFORM STREQUAL "web")
             src/platform/web/host_reports.cpp
             src/platform/web/guest_stack_switch.cpp
             src/platform/linux/host_trace_descriptor.cpp
+            # Issue #72: the page's canvas and event loop.
+            src/platform/web/browser_host.cpp
     )
+else()
+    # Issue #72: Win32 and Linux have no browser canvas or event loop.
+    target_sources(repiu_exe PRIVATE src/platform/browser_host_none.cpp)
 endif()
 
 # Task 513: the web platform layer.

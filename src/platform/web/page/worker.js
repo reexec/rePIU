@@ -24,7 +24,9 @@ self.onmessage = async (event) => {
   if (message.type !== "start") {
     return;
   }
-  const { canvas, game, zip, chd } = message;
+  // Design decision 9: the page names the mount (rom_selection.js mountBlobs):
+  // the ZIPs at the top, the game's first, and the CHD in `<game>/`.
+  const { canvas, game, blobs } = message;
   const started = performance.now();
   const module = await createRepiu({
     repiuCanvas: canvas,
@@ -35,12 +37,7 @@ self.onmessage = async (event) => {
   });
   const FS = module.FS;
   FS.mkdir("/roms");
-  FS.mount(FS.filesystems.WORKERFS, {
-    blobs: [
-      { name: `${game}.zip`, data: zip },
-      { name: `${game}/${chd.name}`, data: chd },
-    ],
-  }, "/roms");
+  FS.mount(FS.filesystems.WORKERFS, { blobs }, "/roms");
   post("status", `${game} running (loaded in ${((performance.now() - started) / 1000).toFixed(1)} s)`);
   try {
     module.callMain([game]);

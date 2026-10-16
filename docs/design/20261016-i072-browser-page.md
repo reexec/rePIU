@@ -132,6 +132,36 @@ worker.js가 사용자가 고른 두 `File`을 WORKERFS로 `/roms`에 마운트�
 환경에서 SDL 비디오를 dummy로, 오디오는 **없음**으로 합니다. SDL의 Emscripten dummy 오디오는 `setInterval` 콜백으로 도는데 Worker에서
 `function signature mismatch`로 멈췄습니다(구현 중 확인). 오디오 출력은 장치를 못 열면 무음으로 계속하므로 결과는 dummy와 같습니다.
 
+## 결정 9: 롬 고르기 — 폴더 하나, 또는 ZIP과 CHD를 각각 (2026-10-16, 사용자 요청)
+
+단위 1의 페이지는 `<input type="file" multiple>` 하나로 ZIP과 CHD를 함께 고르게 했습니다. 그런데 저장소와 MAME의 배치는
+`roms/pumpitea.zip`과 `roms/pumpitea/010209_1821.chd`처럼 **두 파일이 다른 폴더**에 있어, 파일 대화상자 한 번으로는
+둘을 함께 고를 수 없었습니다(사용자 보고). 고르는 방법을 둘로 바꿉니다.
+
+* **폴더 하나** (`<input type="file" webkitdirectory>`): 고른 폴더 안에서 게임을 찾습니다.
+  * 롬 폴더 배치: 맨 위의 `<게임>.zip`과 하위 폴더 `<게임>/`의 `.chd`가 짝이면 그 게임입니다. 여러 게임이 있으면 목록에서
+    고릅니다.
+  * 평평한 배치: 맨 위에 ZIP이 하나이고 같은 자리에 `.chd`가 있으면 그 둘입니다.
+  * 맨 위의 다른 ZIP들도 함께 마운트합니다. 게임 ZIP에 항목이 없을 때 로더가 부모 롬셋 ZIP(`pumpite.zip` 등)을 찾기
+    때문입니다. WORKERFS는 읽는 부분만 읽으므로 더 마운트해도 비용이 없습니다.
+* **각각**: ZIP 칸과 CHD 칸을 따로 둡니다. 게임 이름은 지금처럼 ZIP 이름입니다.
+
+어느 방법이든 Worker에는 `{game, zips: [File], chd: File}`을 넘기고, Worker는 ZIP들을 `/roms/<이름>.zip`, CHD를
+`/roms/<game>/<이름>.chd`로 마운트합니다. 고르는 규칙은 `rom_selection.js`의 순수 함수로 두어 Node에서 시험합니다.
+
+## 결정 10: 진행이 보이는 페이지 (2026-10-16, 사용자 요청)
+
+시작한 뒤 1분 넘게 페이지에 아무것도 나오지 않았습니다(사용자 보고, 헤드리스 Edge에서도 같음). 원인은 로더가 CHD에서
+게임 파일(pumpitea 736개, 약 411 MB)을 다 풀 때까지 한 줄도 찍지 않기 때문입니다(확인됨: `PreparePiuChdMount`가 끝난 뒤에야
+첫 로그). 브라우저에서는 실행마다 풉니다(결정 2).
+
+* **엔진:** `PreparePiuChdMount`가 선택 인자로 풀기 관찰자(`PiuChdUnpackObserver`)를 받습니다. 시작할 때 전체 파일 수와
+  크기(디렉터리 기록만 먼저 훑어 셈)를, 그 뒤 약 16 MB마다 진행을 알립니다. assets 계층은 출력하지 않고, 로더가 로그로
+  찍습니다. 로더는 풀기 전 준비 단계에도 한 줄을 찍습니다. 첫 실행의 Windows·Linux에서도 같은 줄이 나옵니다.
+* **페이지:** 엔진 출력을 캔버스 옆(좁은 화면에서는 아래)에 두어 스크롤 없이 보이게 합니다. 실행 중에는 페이지 스레드에서
+  0.5초마다 경과 시간, 줄 수, 마지막 줄을 갱신합니다(Worker가 바빠도 셈). 사용자가 로그를 위로 올려 읽는 동안에는 자동
+  스크롤을 멈춥니다. 로그 전체를 복사하는 버튼을 둡니다.
+
 ## 바꾸지 않는 것
 
 * HLE, 실행 규칙, 렌더러(#69), 단일 스레드 루프의 규칙(#64).
@@ -302,6 +332,39 @@ and error go to the page's log area and the console. So that SDL does not look f
 Emscripten dummy audio runs on a `setInterval` callback, which stopped in a Worker with `function signature mismatch`
 (found during implementation); an audio output that cannot open its device carries on silent, so the result is what the
 dummy gave.
+
+## Decision 9: picking the ROMs — one folder, or the ZIP and the CHD separately (2026-10-16, requested by the user)
+
+Unit 1's page picked the ZIP and the CHD together with one `<input type="file" multiple>`. The repository's and MAME's
+layout, however, keeps **the two files in different folders** (`roms/pumpitea.zip` and `roms/pumpitea/010209_1821.chd`),
+so one file dialog could not pick both (reported by the user). Picking becomes two ways:
+
+* **One folder** (`<input type="file" webkitdirectory>`): the game is found inside the chosen folder.
+  * ROM-folder layout: a top-level `<game>.zip` paired with a `.chd` in the subfolder `<game>/` is that game. With
+    several games, one is chosen from a list.
+  * Flat layout: one top-level ZIP with a `.chd` beside it are the two.
+  * The other top-level ZIPs are mounted too, because the loader looks in the parent ROM set's ZIP (`pumpite.zip` and the
+    like) when the game's ZIP lacks an entry. WORKERFS reads only what is read, so mounting more costs nothing.
+* **Separately**: a ZIP field and a CHD field. The game is named by the ZIP, as before.
+
+Either way the Worker receives `{game, zips: [File], chd: File}` and mounts the ZIPs at `/roms/<name>.zip` and the CHD at
+`/roms/<game>/<name>.chd`. The picking rules are pure functions in `rom_selection.js`, tested under Node.
+
+## Decision 10: a page that shows its progress (2026-10-16, requested by the user)
+
+After starting, nothing appeared on the page for over a minute (reported by the user; headless Edge alike). The cause is
+that the loader prints no line until it has unpacked the game's files from the CHD (736 files, about 411 MB for
+pumpitea; confirmed: the first log line comes after `PreparePiuChdMount` returns). In a browser that happens on every run
+(decision 2).
+
+* **Engine:** `PreparePiuChdMount` takes an optional unpack observer (`PiuChdUnpackObserver`): at the start it reports the
+  total files and size (counted from the directory records first), then progress about every 16 MB. The assets layer
+  prints nothing; the loader logs it. The loader also prints a line before the preparation itself. Windows and Linux show
+  the same lines on a first run.
+* **Page:** the engine's output sits beside the canvas (below it on a narrow screen), visible without scrolling. While
+  running, the page's own thread updates the elapsed time, the line count and the latest line every 0.5 s (it counts
+  even while the Worker is busy). Automatic scrolling pauses while the reader has scrolled up. A button copies the whole
+  log.
 
 ## What does not change
 

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <string_view>
 
@@ -31,13 +32,32 @@ struct PiuChdMountResult
 // launcher can report availability without extracting a disc. Scans for the
 // PIU10 entry names rather than parsing the archive, which is what the mount
 // has always done.
+// Issue #72. How far an unpack has come. Unpacking the game's files from the
+// CHD takes a minute or more on a first run, and on every run in a browser,
+// where nothing else is printed meanwhile.
+struct PiuChdUnpackProgress
+{
+    // The first report, before any file is written.
+    bool starting = false;
+    std::uint32_t files = 0;
+    std::uint64_t bytes = 0;
+    // What the whole unpack writes, counted from the directories first.
+    std::uint32_t total_files = 0;
+    std::uint64_t total_bytes = 0;
+};
+
+// Called when an unpack starts and then about every 16 MB. Not called when
+// the cache is reused.
+using PiuChdUnpackObserver = std::function<void(const PiuChdUnpackProgress&)>;
+
 [[nodiscard]] bool PiuRomZipHasRequiredEntries(
     const std::filesystem::path& rom_zip_path);
 
 bool PreparePiuChdMount(std::string_view rom_set_id,
                         const std::filesystem::path& roms_root,
                         const std::filesystem::path& cache_root,
-                        PiuChdMountResult* result);
+                        PiuChdMountResult* result,
+                        const PiuChdUnpackObserver& observer = {});
 
 }  // namespace repiu::assets
 

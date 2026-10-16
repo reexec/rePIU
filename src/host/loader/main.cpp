@@ -5285,9 +5285,40 @@ int main(int argc, char** argv)
 
     if (!profile->rom_set_id.empty())
     {
+        // Issue #72: unpacking the game's files from the CHD takes a minute or
+        // more on a first run, and on every run in a browser, where nothing
+        // else is printed until it ends. So it says what it is doing.
+        logger->info("{} preparing the game's files from roms/{}.zip and its CHD",
+                     profile->rom_set_id, profile->rom_set_id);
+        const std::string rom_set_id(profile->rom_set_id);
+        const auto megabytes = [](const std::uint64_t bytes) {
+            return static_cast<unsigned long long>(bytes / (1024U * 1024U));
+        };
+        const repiu::assets::PiuChdUnpackObserver unpack_progress =
+            [&logger, &rom_set_id, &megabytes](
+                const repiu::assets::PiuChdUnpackProgress& progress) {
+                if (progress.starting)
+                {
+                    logger->info("{} unpacking {} files ({} MB) from the CHD; "
+                                 "this happens once per cache, or on every "
+                                 "browser run",
+                                 rom_set_id, progress.total_files,
+                                 megabytes(progress.total_bytes));
+                    return;
+                }
+                const unsigned long long percent = progress.total_bytes != 0U
+                    ? static_cast<unsigned long long>(
+                          progress.bytes * 100U / progress.total_bytes)
+                    : 0ULL;
+                logger->info("{} unpacked {}% ({}/{} files, {}/{} MB)",
+                             rom_set_id, percent, progress.files,
+                             progress.total_files, megabytes(progress.bytes),
+                             megabytes(progress.total_bytes));
+            };
         repiu::assets::PiuChdMountResult mount;
         if (!repiu::assets::PreparePiuChdMount(
-                profile->rom_set_id, "roms", "build/runtime_mounts", &mount) ||
+                profile->rom_set_id, "roms", "build/runtime_mounts", &mount,
+                unpack_progress) ||
             !mount.valid || !mount.mounted)
         {
             logger->error("{} CHD mount failed: {}", profile->rom_set_id,

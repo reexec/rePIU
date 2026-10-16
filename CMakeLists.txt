@@ -1300,6 +1300,7 @@ if(EMSCRIPTEN)
     set(repiu_browser_page
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/index.html"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/main.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/rom_selection.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/worker.js"
     )
     add_custom_command(TARGET repiu_browser POST_BUILD

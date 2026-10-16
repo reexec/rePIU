@@ -28,7 +28,8 @@
 GL 함수 조회)와 돌아갈 이벤트 고리(Asyncify로 한 번 양보). worker.js가 `Module.repiuCanvas`와 `Module.repiuYield`를 줄 때만
 동작하고, Node에서는 모두 "없음"입니다. Win32·Linux는 `src/platform/browser_host_none.cpp`입니다.
 
-페이지 파일은 `page/`(`index.html`, `main.js`, `worker.js`)이고, 링크 타깃 `repiu_browser`가 빌드 디렉터리에 복사합니다:
+페이지 파일은 `page/`(`index.html`, `main.js`, `worker.js`, 롬 고르기 규칙 `rom_selection.js`와 그 Node 시험
+`rom_selection.test.js`)이고, 링크 타깃 `repiu_browser`가 빌드 디렉터리에 복사합니다:
 
 ```bash
 ./scripts/build_web_wasm.sh --build-dir ~/repiu-web --target repiu_browser
@@ -100,7 +101,8 @@ context on an OffscreenCanvas, and the GL function lookup) and an event loop to 
 It works only when worker.js provides `Module.repiuCanvas` and `Module.repiuYield`; under Node everything answers
 "none". Win32 and Linux use `src/platform/browser_host_none.cpp`.
 
-The page files are in `page/` (`index.html`, `main.js`, `worker.js`), copied into the build directory by the link target
+The page files are in `page/` (`index.html`, `main.js`, `worker.js`, and the ROM-picking rules `rom_selection.js`
+with their Node test `rom_selection.test.js`), copied into the build directory by the link target
 `repiu_browser`:
 
 ```bash

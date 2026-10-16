@@ -85,6 +85,44 @@ EM_ASYNC_JS(void, RepiuBrowserYield, (), {
     });
 });
 
+// Issue #76. worker.js queues what the page sends in `Module.repiuInput`
+// (an array, oldest first). One item per call: `ints` gets kind, down,
+// repeat, modifiers, pad, buttons, four axes, two triggers, and how long ago
+// the page saw it in microseconds (-1 when unknown); `code` the key name.
+EM_JS_DEPS(repiu_browser_input, "$stringToUTF8");
+EM_JS(int, RepiuTakeBrowserInput, (char* code, int code_size, int* ints), {
+    const queue = (typeof Module !== "undefined") ? Module.repiuInput : null;
+    if (!queue || queue.length === 0) {
+        return 0;
+    }
+    const item = queue.shift();
+    const kinds = { "key": 0, "focus-lost": 1, "pad": 2, "pad-removed": 3 };
+    const kind = kinds[item.kind];
+    if (kind === undefined) {
+        return 0;
+    }
+    stringToUTF8(item.code || "", code, code_size);
+    const values = [
+        kind, item.down ? 1 : 0, item.repeat ? 1 : 0, item.mods | 0, item.index | 0,
+        item.buttons | 0,
+    ];
+    const axes = item.axes || [];
+    const triggers = item.triggers || [];
+    for (let i = 0; i < 4; ++i) {
+        values.push(axes[i] | 0);
+    }
+    for (let i = 0; i < 2; ++i) {
+        values.push(triggers[i] | 0);
+    }
+    const now = performance.timeOrigin + performance.now();
+    values.push((typeof item.time === "number")
+        ? Math.min(2147483647, Math.max(0, Math.round((now - item.time) * 1000))) : -1);
+    for (let i = 0; i < values.length; ++i) {
+        HEAP32[(ints >> 2) + i] = values[i];
+    }
+    return 1;
+});
+
 }  // namespace
 
 namespace repiu::platform
@@ -125,6 +163,34 @@ bool YieldToHostEventLoop()
         return false;
     }
     RepiuBrowserYield();
+    return true;
+}
+
+bool TakeBrowserInputEvent(BrowserInputEvent* const event)
+{
+    if (event == nullptr)
+    {
+        return false;
+    }
+    *event = BrowserInputEvent{};
+    int ints[13] = {};
+    if (RepiuTakeBrowserInput(event->code, static_cast<int>(sizeof(event->code)), ints) == 0)
+    {
+        return false;
+    }
+    event->kind = static_cast<BrowserInputEvent::Kind>(ints[0]);
+    event->down = ints[1] != 0;
+    event->repeat = ints[2] != 0;
+    event->modifiers = static_cast<std::uint8_t>(ints[3]);
+    event->pad = static_cast<std::uint8_t>(ints[4]);
+    event->buttons = static_cast<std::uint32_t>(ints[5]);
+    for (int i = 0; i < 4; ++i)
+    {
+        event->axes[i] = static_cast<std::int16_t>(ints[6 + i]);
+    }
+    event->triggers[0] = static_cast<std::int16_t>(ints[10]);
+    event->triggers[1] = static_cast<std::int16_t>(ints[11]);
+    event->age_nanoseconds = ints[12] > 0 ? static_cast<std::uint64_t>(ints[12]) * 1000U : 0U;
     return true;
 }
 

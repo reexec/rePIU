@@ -31,6 +31,7 @@
 #include "dos_console_input_probe.h"
 #include "glide_letterbox_probe.h"
 #include "host_pad_input_probe.h"
+#include "browser_key_code_probe.h"
 #include "mesa_fx_texture_source_probe.h"
 #include "dos_file_handle_cache_probe.h"
 #include "env_toggle_probe.h"
@@ -112,6 +113,7 @@ constexpr CoreProbe kCoreProbes[] = {
     // Issue #34. Pad names, defaults and the state-to-input mapping, with no
     // device attached.
     {"host_pad_input", &repiu::tools::RunHostPadInputProbe},
+    {"browser_key_code", &repiu::tools::RunBrowserKeyCodeProbe},
     // Issue #37. Finding the game's 8-bit texture originals through fake
     // Mesa structures.
     {"mesa_fx_texture_source", &repiu::tools::RunMesaFxTextureSourceProbe},

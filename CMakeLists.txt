@@ -274,6 +274,7 @@ add_library(repiu_exe
     src/input/host_key_names.cpp
     src/input/host_pad_binding.cpp
     src/input/host_pad_state.cpp
+    src/input/browser_key_codes.cpp
     src/input/pad_exit_chord.cpp
     src/input/pad_osd_chord.cpp
     src/input/jamma_input_bindings.cpp
@@ -406,6 +407,7 @@ target_sources(repiu_exe
         src/engine/input/sdl_bios_keyboard_adapter.cpp
         src/engine/input/active_jamma_bindings.cpp
         src/engine/input/sdl_pad_input.cpp
+        src/engine/input/browser_input_bridge.cpp
         src/engine/execution/execution_probe_memory_dump.cpp
         src/engine/execution/execution_trampoline.cpp
         src/engine/execution/host_turn.cpp
@@ -902,6 +904,7 @@ add_executable(repiu_core_probe
     src/tools/aot_probe/dos_console_device_probe.cpp
     src/tools/aot_probe/dos_console_input_probe.cpp
     src/tools/aot_probe/host_pad_input_probe.cpp
+    src/tools/aot_probe/browser_key_code_probe.cpp
     src/tools/aot_probe/mesa_fx_texture_source_probe.cpp
     src/tools/aot_probe/dos_file_handle_cache_probe.cpp
     src/tools/aot_probe/env_toggle_probe.cpp
@@ -1301,6 +1304,7 @@ if(EMSCRIPTEN)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/index.html"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/main.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/rom_selection.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/page_input.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/worker.js"
     )
     add_custom_command(TARGET repiu_browser POST_BUILD

@@ -8,6 +8,13 @@
 
 importScripts("repiu_browser.js");
 
+// Issue #76: the page's keys and gamepads, oldest first, until the engine
+// takes them (Module.repiuInput, read by src/platform/web/browser_host.cpp).
+// Messages arrive while the engine yields, once a frame. Bounded, so input
+// sent while the engine is not taking any (the CHD unpack) cannot pile up.
+const kInputQueueLimit = 1024;
+const inputQueue = [];
+
 function post(type, text) {
   self.postMessage({ type, text });
 }
@@ -21,6 +28,13 @@ self.addEventListener("error", (event) => {
 
 self.onmessage = async (event) => {
   const message = event.data;
+  if (message.type === "input") {
+    inputQueue.push(...message.events);
+    if (inputQueue.length > kInputQueueLimit) {
+      inputQueue.splice(0, inputQueue.length - kInputQueueLimit);
+    }
+    return;
+  }
   if (message.type !== "start") {
     return;
   }
@@ -31,6 +45,7 @@ self.onmessage = async (event) => {
   const module = await createRepiu({
     repiuCanvas: canvas,
     repiuYield: true,
+    repiuInput: inputQueue,
     print: (text) => post("log", text),
     printErr: (text) => post("log", text),
     onAbort: (reason) => post("status", `Aborted: ${reason}`),

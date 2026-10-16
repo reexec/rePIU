@@ -4,7 +4,8 @@
 // separately (rom_selection.js holds the rules); whichever was picked last is
 // what starts. Design decision 10: while it runs, the elapsed time, the line
 // count and the latest line are kept current, since the loader unpacks the
-// CHD for a minute or more before the game draws anything.
+// CHD for a minute or more before the game draws anything. Issue #76: once
+// started, the page's keys and gamepads go to the Worker (page_input.js).
 "use strict";
 
 const folderInput = document.getElementById("folder");
@@ -179,18 +180,29 @@ start.addEventListener("click", () => {
     if (message.type === "log") {
       appendLog(message.text);
     } else if (message.type === "status") {
-      const ended = /^(Stopped|Aborted)/.test(message.text);
-      if (ended) {
-        stopClock();
+      const finished = /^(Stopped|Aborted)/.test(message.text);
+      if (finished) {
+        ended();
       }
-      showStatus(message.text, ended);
+      showStatus(message.text, finished);
+    }
+  };
+  let stopInput = null;
+  const ended = () => {
+    stopClock();
+    if (stopInput !== null) {
+      stopInput();
+      stopInput = null;
     }
   };
   worker.onerror = (event) => {
-    stopClock();
+    ended();
     showStatus(`Worker error: ${event.message}`, true);
   };
   worker.postMessage(
     { type: "start", canvas: offscreen, game: chosen.game, blobs: RomSelection.mountBlobs(chosen) },
     [offscreen]);
+  // The focus leaves the Start button, which a key would otherwise press.
+  start.blur();
+  stopInput = PageInput.forwardInput(worker);
 });

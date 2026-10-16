@@ -29,7 +29,7 @@ GL 함수 조회)와 돌아갈 이벤트 고리(Asyncify로 한 번 양보). wor
 동작하고, Node에서는 모두 "없음"입니다. Win32·Linux는 `src/platform/browser_host_none.cpp`입니다.
 
 페이지 파일은 `page/`(`index.html`, `main.js`, `worker.js`, 롬 고르기 규칙 `rom_selection.js`와 그 Node 시험
-`rom_selection.test.js`)이고, 링크 타깃 `repiu_browser`가 빌드 디렉터리에 복사합니다:
+`rom_selection.test.js`, 입력 `page_input.js`)이고, 링크 타깃 `repiu_browser`가 빌드 디렉터리에 복사합니다:
 
 ```bash
 ./scripts/build_web_wasm.sh --build-dir ~/repiu-web --target repiu_browser
@@ -38,6 +38,16 @@ cd ~/repiu-web && python3 -m http.server 8000     # http://localhost:8000/ 에�
 
 `node_pre.js`는 `window`가 없는 곳(Node, Worker)에서 SDL 비디오를 dummy로, 오디오를 없음으로 둡니다
 ([설계 #72](../../../docs/design/20261016-i072-browser-page.md)).
+
+### 키와 게임패드 (issue #76)
+
+페이지(`page/page_input.js`)가 키를 `KeyboardEvent.code`(키의 자리)와 일어난 시각으로, 표준 매핑 게임패드를 한
+프레임에 한 번 바뀐 것만 Worker로 보냅니다. worker.js는 `Module.repiuInput` 큐(최대 1024개)에 쌓고, 엔진은 이벤트를
+폴링하기 직전에 `TakeBrowserInputEvent`로 꺼내 SDL 이벤트(키는 `SDL_PushEvent`, 패드는 SDL 가상 게임패드)로 바꿉니다.
+그래서 네이티브 키 배치(동전 F5, OSD Tab 등)와 패드 바인딩이 그대로 적용됩니다. 게임이 도는 동안 Ctrl/Meta 조합,
+F11, F12를 뺀 모든 키의 브라우저 기본 동작을 막으므로 F5가 새로고침하지 않습니다. 이름 표는
+`src/input/browser_key_codes.cpp`, 다리는 `src/engine/input/browser_input_bridge.cpp`입니다
+([설계 #76](../../../docs/design/20261016-i076-browser-input.md)).
 
 ## 여기 없는 것 — `host_environment`, `worker_signal`, `host_trace_descriptor`
 
@@ -102,7 +112,7 @@ It works only when worker.js provides `Module.repiuCanvas` and `Module.repiuYiel
 "none". Win32 and Linux use `src/platform/browser_host_none.cpp`.
 
 The page files are in `page/` (`index.html`, `main.js`, `worker.js`, and the ROM-picking rules `rom_selection.js`
-with their Node test `rom_selection.test.js`), copied into the build directory by the link target
+with their Node test `rom_selection.test.js`, and the input `page_input.js`), copied into the build directory by the link target
 `repiu_browser`:
 
 ```bash
@@ -112,6 +122,17 @@ cd ~/repiu-web && python3 -m http.server 8000     # pick the ZIP and the CHD at 
 
 `node_pre.js` makes SDL's video dummy and its audio none wherever there is no `window` (Node, a Worker)
 ([design #72](../../../docs/design/20261016-i072-browser-page.md)).
+
+### Keys and gamepads (issue #76)
+
+The page (`page/page_input.js`) sends keys to the Worker by `KeyboardEvent.code` (the key's position) with when they
+happened, and standard-mapping gamepads once a frame when they change. worker.js queues them in `Module.repiuInput`
+(at most 1024), and right before the events are polled the engine takes them through `TakeBrowserInputEvent` and turns
+them into SDL events (`SDL_PushEvent` for keys, SDL virtual gamepads for pads). So the native key layout (coin F5, the
+OSD on Tab, and the rest) and the pad bindings apply as they are. While the game runs, every key but Ctrl/Meta
+combinations, F11 and F12 has its browser default stopped, so F5 does not reload. The name table is
+`src/input/browser_key_codes.cpp` and the bridge `src/engine/input/browser_input_bridge.cpp`
+([design #76](../../../docs/design/20261016-i076-browser-input.md)).
 
 ## What is not here — `host_environment`, `worker_signal`, `host_trace_descriptor`
 

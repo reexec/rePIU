@@ -60,6 +60,34 @@ headless Chrome을 DevTools 프로토콜로 몰아 확인했습니다(scratchpad
 * 단위 3: OPFS 영구 저장(풀기 55초를 매번 하지 않게), GitHub Pages 배포.
 * 페이지가 보여 주는 처리량(초당 실행 단계) 표시.
 
+## 2026-10-16 — 후속: 롬 고르기 (설계 결정 9)
+
+브랜치 `task/i072-rom-picker`(main `4320931`, v0.0.223에서). 사용자 보고: ZIP과 CHD가 다른 폴더에 있어(`roms/pumpitea.zip`,
+`roms/pumpitea/010209_1821.chd`) 파일 대화상자 한 번으로 둘을 함께 고를 수 없었습니다.
+
+### 구현
+
+* `page/rom_selection.js`: 폴더의 파일 목록에서 게임을 찾는 `findGamesInFolder`(롬 폴더 배치, 평평한 배치), 각각 고른 둘을 묶는
+  `pairSeparateFiles`, Worker의 마운트 이름을 정하는 `mountBlobs`. 게임 이름은 ZIP 이름을 소문자로. 맨 위의 다른 ZIP도
+  함께 마운트(부모 롬셋 대체 경로).
+* `index.html`·`main.js`: 폴더 칸(`webkitdirectory`), ZIP 칸, CHD 칸, 게임이 여럿이면 목록. 마지막으로 고른 방법을 따르고,
+  다른 방법의 칸은 비웁니다. 짝을 못 찾으면 이유를 붉은 글씨로.
+* `worker.js`: 페이지가 넘긴 `{game, blobs}`를 그대로 마운트.
+* CMake가 `rom_selection.js`를 함께 복사.
+
+### 확인
+
+| 확인 | 결과 |
+|---|---|
+| Node 시험 `rom_selection.test.js` | 11/11 (롬 폴더, 여러 게임, 평평한 배치, 평평한 배치에 ZIP 여럿, 게임 하위 폴더만, 짝 없는 ZIP, 대소문자, 너무 깊은 CHD, 각각 고르기, 마운트 이름, 게임 이름) |
+| 이 PC의 실제 `roms/` | 16개 게임을 찾음. pumpitea의 마운트는 `pumpitea.zip`, `pumpite.zip`(부모), `pumpitea/010209_1821.chd`. `roms/pumpitea`만 고르면 "ZIP이 없다"는 안내 |
+| 웹 빌드 | `repiu_browser`와 페이지 파일(`rom_selection.js` 포함)이 빌드 디렉터리에 나옴 |
+| 헤드리스 Edge (DevTools 프로토콜) | 폴더 모드: `roms` 파일 7,907개를 6초에 받아 16개 게임 목록, pumpitea를 골라 시작하면 `pumpitea running`. 각각 모드: ZIP만 고르면 "Now pick the CHD.", 둘 다 고르면 pumpitea, 시작 |
+
+**확인하지 못한 것:** 헤드리스 Edge에서는 시작 뒤 엔진 로그가 한 줄도 오지 않고 화면이 검었습니다. 이번 변경 전의 페이지
+(`main`의 `index.html`·`main.js`·`worker.js`)도 같은 환경에서 똑같았으므로 이 실행 환경 탓이고 이번 변경 때문은 아닙니다.
+게임 화면이 나오는지는 사용자 브라우저에서 확인할 일로 남깁니다.
+
 ---
 
 # Work log: browser host phase 4 unit 1 — the engine in a Worker drawing to a WebGL2 canvas (issue #72)
@@ -126,3 +154,32 @@ captures show the title and demo play.
   signature mismatch with a path of our own.
 * Unit 3: OPFS persistence (so the 55 s unpack is not repeated every time) and GitHub Pages deployment.
 * The page showing throughput (steps per second).
+
+## 2026-10-16 — follow-up: picking the ROMs (design decision 9)
+
+Branch `task/i072-rom-picker` (main `4320931`, from v0.0.223). Reported by the user: with the ZIP and the CHD in different
+folders (`roms/pumpitea.zip`, `roms/pumpitea/010209_1821.chd`), one file dialog could not pick both.
+
+### Implementation
+
+* `page/rom_selection.js`: `findGamesInFolder` finds games in a folder's file list (the ROM-folder layout and the flat
+  one), `pairSeparateFiles` pairs the two picked separately, and `mountBlobs` names the Worker's mount. The game is the
+  ZIP's name in lower case. The other top-level ZIPs are mounted too (the parent-set fallback).
+* `index.html` and `main.js`: a folder field (`webkitdirectory`), a ZIP field, a CHD field, and a list when there are
+  several games. The way picked last is followed and the other way's fields are cleared; when no pair is found the reason
+  shows in red.
+* `worker.js`: mounts the page's `{game, blobs}` as given.
+* CMake copies `rom_selection.js` too.
+
+### Checked
+
+| Check | Result |
+|---|---|
+| Node test `rom_selection.test.js` | 11/11 (ROM folder, several games, flat, flat with several ZIPs, the game's subfolder alone, an unpaired ZIP, letter case, a CHD too deep, separate picks, mount names, game names) |
+| This PC's real `roms/` | 16 games found; pumpitea mounts `pumpitea.zip`, `pumpite.zip` (its parent) and `pumpitea/010209_1821.chd`; picking `roms/pumpitea` alone explains that there is no ZIP |
+| Web build | `repiu_browser` and the page files (`rom_selection.js` included) come out in the build directory |
+| Headless Edge (DevTools protocol) | folder mode: the 7,907 files of `roms` taken in 6 s, a list of 16 games, pumpitea picked and started gives `pumpitea running`. Separate mode: the ZIP alone gives "Now pick the CHD.", both give pumpitea, which starts |
+
+**Not checked:** in headless Edge no engine log line arrived after starting and the canvas stayed black. The page from
+before this change (`main`'s `index.html`, `main.js` and `worker.js`) did exactly the same there, so it is the
+environment, not this change. Whether the game appears is left for the user's browser.

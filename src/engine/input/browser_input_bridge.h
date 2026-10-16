@@ -46,6 +46,8 @@ private:
     void PushFocusLost();
     void UpdatePad(const repiu::platform::BrowserInputEvent& event);
     void RemovePad(std::uint8_t index);
+    // Issue #76 follow-up: the mouse over the canvas, for the OSD.
+    void PushMouse(const repiu::platform::BrowserInputEvent& event);
 
     // The page's gamepad indexes 0 to 3.
     std::array<VirtualPad, 4> pads_{};

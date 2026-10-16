@@ -910,6 +910,11 @@ void GlideOpenGlBackend::ApplyDrawableViewport() {
   // unless keep-aspect is off, when it fills the drawable.
   drawable_width_ = static_cast<std::uint32_t>(drawable_width);
   drawable_height_ = static_cast<std::uint32_t>(drawable_height);
+  if (osd_ != nullptr) {
+    // Issue #76: an overlay with no SDL window lays out in the drawable.
+    osd_->SetDisplaySize(static_cast<float>(drawable_width),
+                         static_cast<float>(drawable_height));
+  }
   content_rect_ =
       ComputeGlidePictureRect(logical_width_, logical_height_,
                               drawable_width_, drawable_height_, keep_aspect_);

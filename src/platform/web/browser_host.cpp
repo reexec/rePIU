@@ -96,7 +96,8 @@ EM_JS(int, RepiuTakeBrowserInput, (char* code, int code_size, int* ints), {
         return 0;
     }
     const item = queue.shift();
-    const kinds = { "key": 0, "focus-lost": 1, "pad": 2, "pad-removed": 3 };
+    const kinds = { "key": 0, "focus-lost": 1, "pad": 2, "pad-removed": 3,
+                    "mouse-move": 4, "mouse-button": 5, "mouse-wheel": 6 };
     const kind = kinds[item.kind];
     if (kind === undefined) {
         return 0;
@@ -117,6 +118,7 @@ EM_JS(int, RepiuTakeBrowserInput, (char* code, int code_size, int* ints), {
     const now = performance.timeOrigin + performance.now();
     values.push((typeof item.time === "number")
         ? Math.min(2147483647, Math.max(0, Math.round((now - item.time) * 1000))) : -1);
+    values.push(item.x | 0, item.y | 0, item.clicks | 0, item.wheelX | 0, item.wheelY | 0);
     for (let i = 0; i < values.length; ++i) {
         HEAP32[(ints >> 2) + i] = values[i];
     }
@@ -202,7 +204,7 @@ bool TakeBrowserInputEvent(BrowserInputEvent* const event)
         return false;
     }
     *event = BrowserInputEvent{};
-    int ints[13] = {};
+    int ints[18] = {};
     if (RepiuTakeBrowserInput(event->code, static_cast<int>(sizeof(event->code)), ints) == 0)
     {
         return false;
@@ -220,6 +222,11 @@ bool TakeBrowserInputEvent(BrowserInputEvent* const event)
     event->triggers[0] = static_cast<std::int16_t>(ints[10]);
     event->triggers[1] = static_cast<std::int16_t>(ints[11]);
     event->age_nanoseconds = ints[12] > 0 ? static_cast<std::uint64_t>(ints[12]) * 1000U : 0U;
+    event->mouse_x = static_cast<std::int16_t>(ints[13]);
+    event->mouse_y = static_cast<std::int16_t>(ints[14]);
+    event->clicks = static_cast<std::uint8_t>(ints[15] > 0 ? ints[15] : 1);
+    event->wheel_x = static_cast<std::int16_t>(ints[16]);
+    event->wheel_y = static_cast<std::int16_t>(ints[17]);
     return true;
 }
 

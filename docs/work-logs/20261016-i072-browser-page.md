@@ -88,6 +88,35 @@ headless Chrome을 DevTools 프로토콜로 몰아 확인했습니다(scratchpad
 (`main`의 `index.html`·`main.js`·`worker.js`)도 같은 환경에서 똑같았으므로 이 실행 환경 탓이고 이번 변경 때문은 아닙니다.
 게임 화면이 나오는지는 사용자 브라우저에서 확인할 일로 남깁니다.
 
+## 2026-10-16 — 후속: 진행이 보이는 페이지 (설계 결정 10)
+
+사용자 요청: 진행 상황을 알기 어려우니 출력 로그를 같은 페이지에서 보이게. 원인을 먼저 확인했습니다.
+
+### 원인 (확인됨)
+
+* Worker의 메시지는 페이지에 옵니다: 시험용 표시(`[diag] creating module`, `mounted [pumpitea.zip, pumpitea]`, `callMain
+  begins`)가 모두 도착했습니다.
+* 그런데 `callMain` 뒤 40~120초 동안 엔진 출력이 한 줄도 없었습니다. 로더는 `PreparePiuChdMount`가 CHD에서 게임 파일(736개,
+  409 MB)을 다 푼 **뒤에야** 첫 줄을 찍기 때문입니다. 브라우저에서는 실행마다 풀고(결정 2), 헤드리스 Edge에서는 이것이 약
+  100초 걸렸습니다. 앞 절의 "헤드리스 Edge에서 로그 0줄"도 이것이었습니다(엔진이 멈춘 것이 아님).
+
+### 구현
+
+* `PreparePiuChdMount`의 선택 인자 `PiuChdUnpackObserver`: 디렉터리 기록으로 전체를 먼저 세고(`CountTree`), 풀기 시작과 약
+  16 MB마다 알립니다. 로더는 준비 시작 한 줄과, 풀기 시작(파일 수·MB)과 진행(%·파일·MB)을 로그로 찍습니다.
+* 페이지: 넓은 화면(1100 px 이상)에서는 캔버스 오른쪽 열에 롬 선택·상태·진행 줄·엔진 출력, 좁은 화면에서는 아래로. 진행 줄은
+  페이지 스레드에서 0.5초마다 "경과 시간, 줄 수, 마지막 줄". 엔진 출력은 끝에 있을 때만 따라 내려가고, 복사 버튼이 있습니다.
+
+### 확인
+
+| 확인 | 결과 |
+|---|---|
+| Win32 `direct` Release (로더, `repiu_exe_analyzer` 빌드) | 빈 캐시에서: 준비 줄, 풀기 시작(736개, 409 MB), 약 0.7초마다 진행 26줄, 21초 뒤 완료 |
+| 웹 (`repiu`, `repiu_browser`) | 빌드. clang이 `string_view` → `const std::string&`를 거절해 값 복사로 고침(MSVC는 통과시켰음) |
+| 헤드리스 Edge, 폴더 모드 | 시작 3초 안에 준비·풀기 시작 줄, 그 뒤 약 4초마다 진행 줄. 87초에 82% |
+| 넓은 화면(1600×1000) 캡처 | 캔버스 오른쪽에 조작부, "0:52 elapsed ... Latest: ...", 엔진 출력 칸, 복사 버튼 |
+| Node 시험 `rom_selection.test.js` | 11/11 |
+
 ---
 
 # Work log: browser host phase 4 unit 1 — the engine in a Worker drawing to a WebGL2 canvas (issue #72)
@@ -183,3 +212,36 @@ folders (`roms/pumpitea.zip`, `roms/pumpitea/010209_1821.chd`), one file dialog 
 **Not checked:** in headless Edge no engine log line arrived after starting and the canvas stayed black. The page from
 before this change (`main`'s `index.html`, `main.js` and `worker.js`) did exactly the same there, so it is the
 environment, not this change. Whether the game appears is left for the user's browser.
+
+## 2026-10-16 — follow-up: a page that shows its progress (design decision 10)
+
+Requested by the user: progress was hard to follow, so show the output log on the same page. The cause came first.
+
+### Cause (confirmed)
+
+* The Worker's messages do reach the page: test markers (`[diag] creating module`, `mounted [pumpitea.zip, pumpitea]`,
+  `callMain begins`) all arrived.
+* Yet for 40 to 120 s after `callMain` the engine printed nothing: the loader prints its first line only **after**
+  `PreparePiuChdMount` has unpacked the game's files from the CHD (736 files, 409 MB). A browser unpacks on every run
+  (decision 2), and in headless Edge that took about 100 s. The "no log line in headless Edge" of the section before was
+  this too, not a stopped engine.
+
+### Implementation
+
+* `PreparePiuChdMount`'s optional `PiuChdUnpackObserver`: the total is counted from the directory records first
+  (`CountTree`), then the unpack's start and about every 16 MB are reported. The loader logs a line when preparation
+  starts, the unpack's start (files, MB) and its progress (percent, files, MB).
+* The page: on a wide screen (1100 px and up) the ROM picking, the status, the activity line and the engine output sit
+  in a column right of the canvas; on a narrow one, below it. The page's own thread updates the activity line every
+  0.5 s with the elapsed time, the line count and the latest line. The output follows its end only while the reader is
+  there, and a button copies it.
+
+### Checked
+
+| Check | Result |
+|---|---|
+| Win32 `direct` Release (the loader and `repiu_exe_analyzer` built) | from an empty cache: the preparing line, the unpack's start (736 files, 409 MB), 26 progress lines about 0.7 s apart, done after 21 s |
+| Web (`repiu`, `repiu_browser`) | builds; clang refused `string_view` to `const std::string&`, fixed with a copy (MSVC had let it through) |
+| Headless Edge, folder mode | the preparing and unpack-start lines within 3 s of starting, then progress lines about 4 s apart; 82% at 87 s |
+| A wide (1600×1000) capture | the controls right of the canvas, "0:52 elapsed ... Latest: ...", the output box, the copy button |
+| Node test `rom_selection.test.js` | 11/11 |

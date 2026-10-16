@@ -149,6 +149,19 @@ worker.js가 사용자가 고른 두 `File`을 WORKERFS로 `/roms`에 마운트�
 어느 방법이든 Worker에는 `{game, zips: [File], chd: File}`을 넘기고, Worker는 ZIP들을 `/roms/<이름>.zip`, CHD를
 `/roms/<game>/<이름>.chd`로 마운트합니다. 고르는 규칙은 `rom_selection.js`의 순수 함수로 두어 Node에서 시험합니다.
 
+## 결정 10: 진행이 보이는 페이지 (2026-10-16, 사용자 요청)
+
+시작한 뒤 1분 넘게 페이지에 아무것도 나오지 않았습니다(사용자 보고, 헤드리스 Edge에서도 같음). 원인은 로더가 CHD에서
+게임 파일(pumpitea 736개, 약 411 MB)을 다 풀 때까지 한 줄도 찍지 않기 때문입니다(확인됨: `PreparePiuChdMount`가 끝난 뒤에야
+첫 로그). 브라우저에서는 실행마다 풉니다(결정 2).
+
+* **엔진:** `PreparePiuChdMount`가 선택 인자로 풀기 관찰자(`PiuChdUnpackObserver`)를 받습니다. 시작할 때 전체 파일 수와
+  크기(디렉터리 기록만 먼저 훑어 셈)를, 그 뒤 약 16 MB마다 진행을 알립니다. assets 계층은 출력하지 않고, 로더가 로그로
+  찍습니다. 로더는 풀기 전 준비 단계에도 한 줄을 찍습니다. 첫 실행의 Windows·Linux에서도 같은 줄이 나옵니다.
+* **페이지:** 엔진 출력을 캔버스 옆(좁은 화면에서는 아래)에 두어 스크롤 없이 보이게 합니다. 실행 중에는 페이지 스레드에서
+  0.5초마다 경과 시간, 줄 수, 마지막 줄을 갱신합니다(Worker가 바빠도 셈). 사용자가 로그를 위로 올려 읽는 동안에는 자동
+  스크롤을 멈춥니다. 로그 전체를 복사하는 버튼을 둡니다.
+
 ## 바꾸지 않는 것
 
 * HLE, 실행 규칙, 렌더러(#69), 단일 스레드 루프의 규칙(#64).
@@ -336,6 +349,22 @@ so one file dialog could not pick both (reported by the user). Picking becomes t
 
 Either way the Worker receives `{game, zips: [File], chd: File}` and mounts the ZIPs at `/roms/<name>.zip` and the CHD at
 `/roms/<game>/<name>.chd`. The picking rules are pure functions in `rom_selection.js`, tested under Node.
+
+## Decision 10: a page that shows its progress (2026-10-16, requested by the user)
+
+After starting, nothing appeared on the page for over a minute (reported by the user; headless Edge alike). The cause is
+that the loader prints no line until it has unpacked the game's files from the CHD (736 files, about 411 MB for
+pumpitea; confirmed: the first log line comes after `PreparePiuChdMount` returns). In a browser that happens on every run
+(decision 2).
+
+* **Engine:** `PreparePiuChdMount` takes an optional unpack observer (`PiuChdUnpackObserver`): at the start it reports the
+  total files and size (counted from the directory records first), then progress about every 16 MB. The assets layer
+  prints nothing; the loader logs it. The loader also prints a line before the preparation itself. Windows and Linux show
+  the same lines on a first run.
+* **Page:** the engine's output sits beside the canvas (below it on a narrow screen), visible without scrolling. While
+  running, the page's own thread updates the elapsed time, the line count and the latest line every 0.5 s (it counts
+  even while the Worker is busy). Automatic scrolling pauses while the reader has scrolled up. A button copies the whole
+  log.
 
 ## What does not change
 

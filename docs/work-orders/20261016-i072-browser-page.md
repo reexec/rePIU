@@ -36,6 +36,13 @@
 
 완료 기준: 폴더 하나로도, ZIP·CHD를 각각으로도 pumpitea를 고를 수 있고 Node 시험이 통과한다. 브라우저 확인은 사용자.
 
+## 후속: 진행이 보이는 페이지 (2026-10-16, 설계 결정 10)
+
+1. `PreparePiuChdMount`에 풀기 관찰자(선택 인자). 디렉터리 기록으로 전체를 먼저 세고, 시작과 약 16 MB마다 알림.
+2. 로더: 준비 시작 한 줄, 관찰자가 풀기 시작과 진행(%·파일·MB)을 로그로.
+3. 페이지: 로그를 캔버스 옆에, 경과 시간·줄 수·마지막 줄, 따라가기 스크롤, 복사 버튼.
+4. 확인: Win32 빌드(로더, `repiu_exe_analyzer`), Node에서 진행 줄, 헤드리스 브라우저에서 시작 직후부터 줄이 보이는지.
+
 ---
 
 # Work order: browser host phase 4 unit 1 — the engine in a Worker drawing to a WebGL2 canvas (issue #72)
@@ -80,3 +87,12 @@ Branch: `task/i072-rom-picker`.
 
 Done when: pumpitea can be picked with one folder and with the ZIP and the CHD separately, and the Node test passes. The
 browser check is the user's.
+
+## Follow-up: a page that shows its progress (2026-10-16, design decision 10)
+
+1. An unpack observer for `PreparePiuChdMount` (an optional argument): the total counted from the directory records
+   first, then a report at the start and about every 16 MB.
+2. Loader: a line when preparation starts; the observer logs the unpack's start and progress (percent, files, MB).
+3. Page: the log beside the canvas, the elapsed time, line count and latest line, scrolling that follows, a copy button.
+4. Checks: the Win32 build (the loader, `repiu_exe_analyzer`), the progress lines under Node, and in a headless browser
+   lines from right after the start.

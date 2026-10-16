@@ -319,11 +319,74 @@ bool ParseDirectory(IsoTrackReader* reader,
     return true;
 }
 
+// Issue #72. What an unpack will write: the files ExtractTree extracts,
+// counted from the directory records alone, so progress can be a fraction.
+bool CountTree(IsoTrackReader* reader,
+               const IsoRecord& directory,
+               std::uint32_t depth,
+               PiuChdUnpackProgress* totals)
+{
+    if (depth > 32)
+    {
+        return false;
+    }
+    std::vector<IsoRecord> records;
+    if (!ParseDirectory(reader, directory.extent, directory.bytes, &records))
+    {
+        return false;
+    }
+    for (const IsoRecord& record : records)
+    {
+        if (record.name.empty() || record.name == "." || record.name == "..")
+        {
+            continue;
+        }
+        if (record.directory)
+        {
+            if (!CountTree(reader, record, depth + 1U, totals))
+            {
+                return false;
+            }
+        }
+        else if (reader->ContainsExtent(record.extent, record.bytes))
+        {
+            ++totals->total_files;
+            totals->total_bytes += record.bytes;
+        }
+    }
+    return true;
+}
+
+// Issue #72. Reports an unpack's progress to the observer about every 16 MB.
+struct UnpackReporter
+{
+    static constexpr std::uint64_t kStepBytes = 16U * 1024U * 1024U;
+
+    const PiuChdUnpackObserver* observer = nullptr;
+    PiuChdUnpackProgress progress;
+    std::uint64_t next_report = kStepBytes;
+
+    void FileWritten(const std::uint64_t bytes)
+    {
+        ++progress.files;
+        progress.bytes += bytes;
+        if (observer != nullptr && *observer && progress.bytes >= next_report)
+        {
+            (*observer)(progress);
+            while (next_report <= progress.bytes)
+            {
+                next_report += kStepBytes;
+            }
+        }
+    }
+};
+
 bool ExtractTree(IsoTrackReader* reader,
                  const IsoRecord& directory,
                  const std::filesystem::path& output,
                  PiuChdMountResult* result,
-                 std::uint32_t depth)
+                 std::uint32_t depth,
+                 UnpackReporter* reporter)
 {
     if (depth > 32 || !std::filesystem::create_directories(output) &&
                           !std::filesystem::is_directory(output))
@@ -347,7 +410,7 @@ bool ExtractTree(IsoTrackReader* reader,
         const std::filesystem::path target = output / record.name;
         if (record.directory)
         {
-            if (!ExtractTree(reader, record, target, result, depth + 1U))
+            if (!ExtractTree(reader, record, target, result, depth + 1U, reporter))
             {
                 return false;
             }
@@ -379,6 +442,7 @@ bool ExtractTree(IsoTrackReader* reader,
         }
         ++result->extracted_file_count;
         result->extracted_byte_count += bytes.size();
+        reporter->FileWritten(bytes.size());
     }
     return true;
 }
@@ -393,7 +457,8 @@ bool PiuRomZipHasRequiredEntries(const std::filesystem::path& rom_zip_path)
 bool PreparePiuChdMount(std::string_view rom_set_id,
                         const std::filesystem::path& roms_root,
                         const std::filesystem::path& cache_root,
-                        PiuChdMountResult* result)
+                        PiuChdMountResult* result,
+                        const PiuChdUnpackObserver& observer)
 {
     if (result == nullptr)
     {
@@ -499,7 +564,17 @@ bool PreparePiuChdMount(std::string_view rom_set_id,
         return true;
     }
     result->iso_extent_lba_bias = reader.extent_lba_bias();
-    if (!ExtractTree(&reader, root_record, result->mount_root, result, 0))
+    UnpackReporter reporter;
+    reporter.observer = &observer;
+    if (observer)
+    {
+        // A count that fails only costs the fraction; the unpack decides.
+        CountTree(&reader, root_record, 0, &reporter.progress);
+        PiuChdUnpackProgress starting = reporter.progress;
+        starting.starting = true;
+        observer(starting);
+    }
+    if (!ExtractTree(&reader, root_record, result->mount_root, result, 0, &reporter))
     {
         if (result->message.empty())
         {

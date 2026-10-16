@@ -246,6 +246,13 @@ flowchart LR
 단일 스레드 루프는 호스트 차례에서 화면 교체가 있었거나 16 ms가 지나면 `YieldToHostEventLoop()`로 페이지에 양보합니다
 (브라우저 링크 타깃 `repiu_browser`만 Asyncify, [설계](docs/design/20261016-i072-browser-page.md)).
 
+issue #76부터 페이지의 키와 게임패드도 같은 경계로 들어옵니다. 페이지가 키를 `KeyboardEvent.code`와 일어난 시각으로,
+표준 매핑 게임패드를 바뀔 때 Worker로 보내고, 백엔드의 이벤트 폴링 직전에 `BrowserInputBridge`(`src/engine/input/`)가
+플랫폼의 `TakeBrowserInputEvent`로 꺼내 SDL 이벤트로 바꿉니다: 키는 `ScancodeForBrowserKeyCode`
+(`include/repiu/input/browser_key_codes.h`)로 scancode를 찾아 `SDL_PushEvent`, 초점 잃음은 `SDL_EVENT_WINDOW_FOCUS_LOST`,
+패드는 SDL 가상 게임패드입니다. 그래서 그 뒤의 키 배치·패드 바인딩·OSD 경로는 네이티브와 같습니다. 네이티브에서는
+`TakeBrowserInputEvent`가 늘 거짓이라 아무 일도 하지 않습니다([설계](docs/design/20261016-i076-browser-input.md)).
+
 ### The window boundary and the browser page (issue #72)
 
 The backend handles the window, GL context, swap, size, fullscreen, title and swap interval through `GlideHostWindow`
@@ -256,6 +263,15 @@ the OffscreenCanvas the page handed the Worker, finds GL functions through Emscr
 nothing to swap. At the host turn the single-threaded loop yields to the page through `YieldToHostEventLoop()` once a
 picture was swapped or 16 ms have passed (only the browser link target `repiu_browser` uses Asyncify,
 [design](docs/design/20261016-i072-browser-page.md)).
+
+Since issue #76 the page's keys and gamepads come in through the same boundary. The page sends keys to the Worker by
+`KeyboardEvent.code` with when they happened, and standard-mapping gamepads when they change. Right before the backend
+polls events, `BrowserInputBridge` (`src/engine/input/`) takes them through the platform's `TakeBrowserInputEvent` and
+turns them into SDL events: a key's scancode comes from `ScancodeForBrowserKeyCode`
+(`include/repiu/input/browser_key_codes.h`) and goes in with `SDL_PushEvent`, a lost focus becomes
+`SDL_EVENT_WINDOW_FOCUS_LOST`, and a pad becomes an SDL virtual gamepad. So the key layout, pad bindings and OSD path
+after it are the native ones. Natively `TakeBrowserInputEvent` is always false and nothing happens
+([design](docs/design/20261016-i076-browser-input.md)).
 
 ### GL 3.3 core / ES 3.0 subset (issue #69)
 

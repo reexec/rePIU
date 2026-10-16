@@ -117,6 +117,11 @@ headless Chrome을 DevTools 프로토콜로 몰아 확인했습니다(scratchpad
 | 넓은 화면(1600×1000) 캡처 | 캔버스 오른쪽에 조작부, "0:52 elapsed ... Latest: ...", 엔진 출력 칸, 복사 버튼 |
 | Node 시험 `rom_selection.test.js` | 11/11 |
 
+### 사용자 확인 (2026-10-16)
+
+사용자가 자신의 브라우저에서 새 페이지로 게임이 실행되는 것을 확인했습니다. 키보드 입력은 아직 게임에 가지 않습니다(단위 2).
+F5(기본 배치의 COIN1)는 브라우저 새로고침이 됐습니다. 단위 2에서 페이지가 게임 키의 기본 동작을 막고 Worker로 넘깁니다.
+
 ---
 
 # Work log: browser host phase 4 unit 1 — the engine in a Worker drawing to a WebGL2 canvas (issue #72)
@@ -245,3 +250,9 @@ Requested by the user: progress was hard to follow, so show the output log on th
 | Headless Edge, folder mode | the preparing and unpack-start lines within 3 s of starting, then progress lines about 4 s apart; 82% at 87 s |
 | A wide (1600×1000) capture | the controls right of the canvas, "0:52 elapsed ... Latest: ...", the output box, the copy button |
 | Node test `rom_selection.test.js` | 11/11 |
+
+### Confirmed by the user (2026-10-16)
+
+The user ran the game with the new page in their own browser. Keyboard input does not reach the game yet (unit 2): F5
+(COIN1 in the default layout) reloaded the page. In unit 2 the page stops the browser's default for game keys and hands
+them to the Worker.

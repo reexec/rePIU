@@ -28,10 +28,16 @@
 
 #include "rex86/cpu.h"
 
+#if defined(__EMSCRIPTEN__)
+#include "host/web/wasm_module_services.h"
+#endif
+
 #include <array>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <string_view>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -430,6 +436,98 @@ bool StopRequested()
 }
 
 // ---------------------------------------------------------------------------
+// Issue #79: rex86's wasm translation, on the web. Natively the core has no
+// translation backend, and the interpreter runs alone as before. See
+// docs/design/20261016-i079-rex86-wasm-translation.md.
+
+#if defined(__EMSCRIPTEN__)
+// One synchronous installer for the process: a Worker (or Node) may compile
+// modules of any size synchronously, and one Cpu runs at a time.
+rex86::host::web::WebWasmModuleServices& WasmServices()
+{
+    static rex86::host::web::WebWasmModuleServices services;
+    return services;
+}
+#endif
+
+// Turns translation on as REPIU_REX86_TRANSLATION (wasm, the default, or off)
+// and REPIU_REX86_TRANSLATION_THRESHOLD say. A build that cannot run it says so
+// once and keeps the interpreter; nothing is imitated.
+void ConfigureTranslation(rex86::Cpu* const cpu)
+{
+#if defined(__EMSCRIPTEN__)
+    const char* const setting = std::getenv("REPIU_REX86_TRANSLATION");
+    const std::string_view mode = setting != nullptr ? setting : "wasm";
+    if (mode == "off")
+    {
+        return;
+    }
+    if (mode != "wasm")
+    {
+        std::fprintf(stderr,
+                     "[repiu-emulated] REPIU_REX86_TRANSLATION=%s is neither wasm nor off; "
+                     "using wasm\n",
+                     setting);
+    }
+    rex86::TranslationOptions options;
+    options.mode = rex86::TranslationMode::kWasm;
+    options.wasm = &WasmServices();
+    if (const char* const threshold = std::getenv("REPIU_REX86_TRANSLATION_THRESHOLD"))
+    {
+        char* end = nullptr;
+        const unsigned long value = std::strtoul(threshold, &end, 10);
+        if (end != threshold && *end == '\0')
+        {
+            options.threshold = static_cast<std::uint32_t>(value);
+        }
+    }
+    if (!cpu->SetTranslation(options))
+    {
+        std::fprintf(stderr,
+                     "[repiu-emulated] wasm translation is unavailable; the interpreter runs "
+                     "alone\n");
+    }
+#else
+    static_cast<void>(cpu);
+#endif
+}
+
+// The translation's counts, beside the run's own report.
+void ReportTranslation(const rex86::Cpu& cpu, const std::uint64_t steps)
+{
+#if defined(__EMSCRIPTEN__)
+    if (cpu.translation().mode == rex86::TranslationMode::kOff)
+    {
+        return;
+    }
+    const rex86::TranslationStats stats = cpu.translation_stats();
+    const rex86::host::web::WebWasmModuleServices& services = WasmServices();
+    const double share =
+        steps != 0U ? 100.0 * static_cast<double>(stats.translated_steps) / static_cast<double>(steps)
+                    : 0.0;
+    std::fprintf(stderr,
+                 "[repiu-emulated] translation wasm threshold=%u: translated-steps=%llu (%.1f%%) "
+                 "blocks=%llu block-runs=%llu interpreter-exits=%llu invalidated=%llu "
+                 "modules=%llu evicted=%llu installed=%llu bytes=%llu install-ms=%.0f "
+                 "refused=%llu\n",
+                 cpu.translation().threshold,
+                 static_cast<unsigned long long>(stats.translated_steps), share,
+                 static_cast<unsigned long long>(stats.blocks_translated),
+                 static_cast<unsigned long long>(stats.block_runs),
+                 static_cast<unsigned long long>(stats.interpreter_exits),
+                 static_cast<unsigned long long>(stats.blocks_invalidated),
+                 static_cast<unsigned long long>(stats.modules_submitted),
+                 static_cast<unsigned long long>(stats.modules_evicted),
+                 static_cast<unsigned long long>(services.installed()),
+                 static_cast<unsigned long long>(services.installed_bytes()),
+                 services.install_ms(), static_cast<unsigned long long>(services.failed()));
+#else
+    static_cast<void>(cpu);
+    static_cast<void>(steps);
+#endif
+}
+
+// ---------------------------------------------------------------------------
 // One guest run.
 
 enum class RunEnd : std::uint8_t
@@ -461,6 +559,7 @@ public:
             return;
         }
         const RunningCpuScope running(&cpu_);
+        ConfigureTranslation(&cpu_);
         repiu::platform::SetMemoryChangeObserver(&QueueMemoryChange, &pending_);
         RunEnd end = RunEnd::kContinue;
         while (end == RunEnd::kContinue)
@@ -499,6 +598,7 @@ public:
                      static_cast<unsigned long long>(boundary_passes_),
                      static_cast<unsigned long long>(boundary_folds_),
                      static_cast<unsigned long long>(mirrored_));
+        ReportTranslation(cpu_, steps_);
     }
 
 private:

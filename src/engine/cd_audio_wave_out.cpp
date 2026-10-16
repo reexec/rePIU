@@ -1,4 +1,5 @@
 #include "repiu/engine/cd_audio_wave_out.h"
+#include "repiu/engine/host_audio_stream.h"
 
 #include "repiu/media/chd_cd_image.h"
 #include "repiu/runtime/execution_model.h"
@@ -167,22 +168,14 @@ bool CdAudioWaveOut::Open(const std::filesystem::path& chd_path)
         impl_->message = impl_->image.message();
         return false;
     }
-    if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
-    {
-        impl_->message = std::string("SDL audio initialization failed: ") +
-            SDL_GetError();
-        impl_->image.Close();
-        return false;
-    }
+    // Issue #81: a device natively, the page's mixer in a browser.
     const SDL_AudioSpec format{SDL_AUDIO_S16LE, 2, 44100};
-    impl_->stream = SDL_OpenAudioDeviceStream(
-        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &format, nullptr, nullptr);
+    std::string failure;
+    impl_->stream = OpenHostAudioStream(format, &failure);
     if (impl_->stream == nullptr)
     {
-        impl_->message = std::string("SDL CD-DA stream creation failed: ") +
-            SDL_GetError();
+        impl_->message = "SDL CD-DA " + failure;
         impl_->image.Close();
-        SDL_QuitSubSystem(SDL_INIT_AUDIO);
         return false;
     }
     impl_->shutdown = false;
@@ -322,12 +315,8 @@ void CdAudioWaveOut::Close()
     {
         impl_->worker.join();
     }
-    if (impl_->stream != nullptr)
-    {
-        SDL_DestroyAudioStream(impl_->stream);
-        impl_->stream = nullptr;
-        SDL_QuitSubSystem(SDL_INIT_AUDIO);
-    }
+    CloseHostAudioStream(impl_->stream);
+    impl_->stream = nullptr;
     impl_->image.Close();
 }
 

@@ -6,7 +6,8 @@
      separately, since the two usually sit in different folders.
      Decision 10: the engine's output sits beside the canvas, with the elapsed
      time and the latest line, so a minute of unpacking does not look stopped.
-     Issue #76: keys and gamepads reach the game with the native layout. -->
+     Issue #76: keys and gamepads reach the game with the native layout.
+     Issue #81: the sound plays through an AudioWorklet (audio_worklet.js). -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -28,7 +29,7 @@
   #status.problem { color: #e99; }
   #activity { color: #888; font-size: 12px; font-variant-numeric: tabular-nums;
               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #keys { color: #888; font-size: 12px; }
+  #keys, #sound { color: #888; font-size: 12px; font-variant-numeric: tabular-nums; }
   #keys kbd { font: 11px ui-monospace, monospace; border: 1px solid #444; border-radius: 3px;
               padding: 0 3px; color: #bbb; }
   #log-head { display: flex; align-items: center; gap: 8px; color: #888; font-size: 12px; }
@@ -66,6 +67,7 @@
     </div>
     <div id="status">Pick the ROM folder, or the ZIP and the CHD.</div>
     <div id="activity"></div>
+    <div id="sound"></div>
     <div id="keys">Keys (as natively): coin <kbd>F5</kbd>, test <kbd>F1</kbd>, service <kbd>F2</kbd>,
       clear <kbd>F3</kbd>; P1 <kbd>Q</kbd> <kbd>E</kbd> <kbd>S</kbd> <kbd>Z</kbd> <kbd>C</kbd>;
       P2 keypad <kbd>7</kbd> <kbd>9</kbd> <kbd>5</kbd> <kbd>1</kbd> <kbd>3</kbd>; OSD <kbd>Tab</kbd>.

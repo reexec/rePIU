@@ -6,6 +6,7 @@
 #include "repiu/runtime/execution_model.h"
 #include "repiu/runtime/execution_timeout.h"
 
+#include "repiu/engine/browser_audio_mixer.h"
 #include "repiu/platform/browser_host.h"
 #include "repiu/platform/host_error_stream.h"
 #include "repiu/platform/host_telemetry.h"
@@ -768,6 +769,9 @@ bool OneThreadHostLoop::TakeTurn(ThreadContext* const context)
     context->ymz_audio.Pump();
     context->piu10_mp3_audio.Pump();
     context->cd_audio.Pump();
+    // Issue #81: in a browser page's Worker, what they produced goes on to
+    // the page's AudioWorklet; elsewhere this returns at once.
+    PumpBrowserAudio();
     outcome_ = turn_->Take(nullptr);
     if (outcome_.has_value())
     {

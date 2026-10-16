@@ -253,6 +253,10 @@ issue #76부터 페이지의 키와 게임패드도 같은 경계로 들어옵�
 패드는 SDL 가상 게임패드입니다. 그래서 그 뒤의 키 배치·패드 바인딩·OSD 경로는 네이티브와 같습니다. 네이티브에서는
 `TakeBrowserInputEvent`가 늘 거짓이라 아무 일도 하지 않습니다([설계](docs/design/20261016-i076-browser-input.md)).
 
+브라우저 페이지의 소리(issue #81): 세 오디오 출력은 `OpenHostAudioStream`(`host_audio_stream.h`)으로 스트림을 엽니다. 네이티브는
+SDL 장치 스트림, 브라우저 Worker에서는 장치 없는 스트림이고, `browser_audio_mixer`가 호스트 차례마다 실시간만큼 꺼내 섞어
+`SendBrowserAudio()`로 페이지의 AudioWorklet(`page/audio_worklet.js`)에 보냅니다([설계](docs/design/20261017-i081-browser-sound.md)).
+
 ### The window boundary and the browser page (issue #72)
 
 The backend handles the window, GL context, swap, size, fullscreen, title and swap interval through `GlideHostWindow`
@@ -272,6 +276,11 @@ turns them into SDL events: a key's scancode comes from `ScancodeForBrowserKeyCo
 `SDL_EVENT_WINDOW_FOCUS_LOST`, and a pad becomes an SDL virtual gamepad. So the key layout, pad bindings and OSD path
 after it are the native ones. Natively `TakeBrowserInputEvent` is always false and nothing happens
 ([design](docs/design/20261016-i076-browser-input.md)).
+
+Sound on the browser page (issue #81): the three audio outputs open their streams through `OpenHostAudioStream`
+(`host_audio_stream.h`): an SDL device stream natively, a stream with no device in a browser Worker, from which
+`browser_audio_mixer` takes real time's worth at every host turn, mixes, and sends to the page's AudioWorklet
+(`page/audio_worklet.js`) through `SendBrowserAudio()` ([design](docs/design/20261017-i081-browser-sound.md)).
 
 ### GL 3.3 core / ES 3.0 subset (issue #69)
 

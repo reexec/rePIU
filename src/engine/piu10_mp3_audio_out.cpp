@@ -1,4 +1,5 @@
 #include "repiu/engine/piu10_mp3_audio_out.h"
+#include "repiu/engine/host_audio_stream.h"
 #include "repiu/engine/timer_latency_trace.h"
 #include "repiu/engine/piu10_frame_sync_history.h"
 #include "repiu/runtime/execution_model.h"
@@ -101,7 +102,6 @@ struct Piu10Mp3AudioOut::Impl
     sound::StreamChunkAudit consumer_audit;
 
     SDL_AudioStream* stream = nullptr;
-    bool audio_subsystem_open = false;
     int source_sample_rate = kDefaultSampleRate;
     int source_channels = kDefaultChannels;
     std::atomic<bool> playback_started{false};
@@ -669,24 +669,14 @@ std::size_t Piu10Mp3AudioOut::CalculateStartupSilenceBytes(
 bool Piu10Mp3AudioOut::Open()
 {
     Close();
-    if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
-    {
-        impl_->message =
-            std::string("SDL audio initialization failed: ") + SDL_GetError();
-        std::fprintf(stderr, "[repiu-piu10-mp3] %s\n", impl_->message.c_str());
-        return false;
-    }
-    impl_->audio_subsystem_open = true;
-
+    // Issue #81: a device natively, the page's mixer in a browser.
     const SDL_AudioSpec format{
         SDL_AUDIO_S16LE, kDefaultChannels, kDefaultSampleRate};
-    impl_->stream = SDL_OpenAudioDeviceStream(
-        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &format, nullptr, nullptr);
+    std::string failure;
+    impl_->stream = OpenHostAudioStream(format, &failure);
     if (impl_->stream == nullptr)
     {
-        impl_->message =
-            std::string("SDL PIU10 MP3 stream creation failed: ") +
-            SDL_GetError();
+        impl_->message = "SDL PIU10 MP3 " + failure;
         std::fprintf(stderr, "[repiu-piu10-mp3] %s\n", impl_->message.c_str());
         Close();
         return false;
@@ -807,18 +797,8 @@ void Piu10Mp3AudioOut::Close()
                 "consumer-final", consumer);
         }
     }
-    if (impl_->stream != nullptr)
-    {
-        SDL_ClearAudioStream(impl_->stream);
-        SDL_PauseAudioStreamDevice(impl_->stream);
-        SDL_DestroyAudioStream(impl_->stream);
-        impl_->stream = nullptr;
-    }
-    if (impl_->audio_subsystem_open)
-    {
-        SDL_QuitSubSystem(SDL_INIT_AUDIO);
-        impl_->audio_subsystem_open = false;
-    }
+    CloseHostAudioStream(impl_->stream);
+    impl_->stream = nullptr;
 }
 
 bool Piu10Mp3AudioOut::SetGain(float gain)

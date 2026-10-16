@@ -40,12 +40,16 @@ self.onmessage = async (event) => {
   }
   // Design decision 9: the page names the mount (rom_selection.js mountBlobs):
   // the ZIPs at the top, the game's first, and the CHD in `<game>/`.
-  const { canvas, game, blobs } = message;
+  const { canvas, game, blobs, audioPort, audioSampleRate } = message;
   const started = performance.now();
   const module = await createRepiu({
     repiuCanvas: canvas,
     repiuYield: true,
     repiuInput: inputQueue,
+    // Issue #81: the page's AudioWorklet, and its context's sample rate (0:
+    // no sound).
+    repiuAudioPort: audioPort,
+    repiuAudioSampleRate: audioSampleRate,
     print: (text) => post("log", text),
     printErr: (text) => post("log", text),
     onAbort: (reason) => post("status", `Aborted: ${reason}`),

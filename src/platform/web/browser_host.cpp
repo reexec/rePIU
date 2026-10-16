@@ -123,6 +123,21 @@ EM_JS(int, RepiuTakeBrowserInput, (char* code, int code_size, int* ints), {
     return 1;
 });
 
+// Issue #81: worker.js puts the MessagePort to the page's AudioWorklet and
+// the AudioContext's sample rate in Module.
+EM_JS(int, RepiuBrowserAudioSampleRate, (), {
+    return (typeof Module !== "undefined" && Module.repiuAudioPort &&
+            Module.repiuAudioSampleRate) ? (Module.repiuAudioSampleRate | 0) : 0;
+});
+
+// A copy out of the heap, handed over with the message rather than copied
+// again.
+EM_JS(void, RepiuSendBrowserAudio, (const float* samples, int count), {
+    const start = samples >> 2;
+    const block = HEAPF32.slice(start, start + count);
+    Module.repiuAudioPort.postMessage(block, [block.buffer]);
+});
+
 }  // namespace
 
 namespace repiu::platform
@@ -164,6 +179,20 @@ bool YieldToHostEventLoop()
     }
     RepiuBrowserYield();
     return true;
+}
+
+int BrowserAudioSampleRate()
+{
+    return RepiuBrowserAudioSampleRate();
+}
+
+void SendBrowserAudio(const float* const interleaved, const std::size_t frames)
+{
+    if (interleaved == nullptr || frames == 0U || BrowserAudioSampleRate() <= 0)
+    {
+        return;
+    }
+    RepiuSendBrowserAudio(interleaved, static_cast<int>(frames * 2U));
 }
 
 bool TakeBrowserInputEvent(BrowserInputEvent* const event)

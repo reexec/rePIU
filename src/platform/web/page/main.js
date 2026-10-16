@@ -20,6 +20,7 @@ const logCount = document.getElementById("log-count");
 const copyButton = document.getElementById("copy");
 const activity = document.getElementById("activity");
 const canvas = document.getElementById("screen");
+const soundLine = document.getElementById("sound");
 
 const kLogLines = 400;
 const kHistoryLines = 50000;
@@ -163,11 +164,53 @@ gameSelect.addEventListener("change", () => {
   }
 });
 
-start.addEventListener("click", () => {
+// Issue #81: the sound. The AudioContext is made inside the Start click, as a
+// browser plays sound only after a user gesture; the worklet gets one end of a
+// MessageChannel and the Worker the other, so the sound does not pass through
+// this thread. Null when the browser gives no sound; the game runs anyway.
+async function startSound() {
+  let context;
+  try {
+    context = new AudioContext({ latencyHint: "interactive" });
+  } catch (error) {
+    soundLine.textContent = `Sound unavailable: ${error}`;
+    return null;
+  }
+  try {
+    await context.audioWorklet.addModule("audio_worklet.js");
+    const node = new AudioWorkletNode(context, "repiu-audio",
+      { numberOfInputs: 0, outputChannelCount: [2] });
+    node.connect(context.destination);
+    const channel = new MessageChannel();
+    node.port.postMessage({ type: "engine", port: channel.port1 }, [channel.port1]);
+    node.port.onmessage = (event) => {
+      const stats = event.data;
+      if (stats.type === "stats") {
+        soundLine.textContent =
+          `Sound: ${stats.bufferedMs} ms buffered, peak ${stats.peak.toFixed(2)}, ` +
+          `${stats.underruns} underrun${stats.underruns === 1 ? "" : "s"}, ` +
+          `${stats.receivedSeconds.toFixed(1)} s received`;
+      }
+    };
+    if (context.state === "suspended") {
+      await context.resume();
+    }
+    soundLine.textContent = `Sound: ${context.sampleRate} Hz, waiting for the engine`;
+    return { port: channel.port2, sampleRate: context.sampleRate };
+  } catch (error) {
+    soundLine.textContent = `Sound unavailable: ${error}`;
+    context.close();
+    return null;
+  }
+}
+
+start.addEventListener("click", async () => {
   const chosen = selected();
   if (chosen === null) {
     return;
   }
+  // Before anything awaits, so the AudioContext is made inside the gesture.
+  const soundStarting = startSound();
   for (const control of [start, folderInput, zipInput, chdInput, gameSelect]) {
     control.disabled = true;
   }
@@ -199,9 +242,21 @@ start.addEventListener("click", () => {
     ended();
     showStatus(`Worker error: ${event.message}`, true);
   };
+  const sound = await soundStarting;
+  const transfer = [offscreen];
+  if (sound !== null) {
+    transfer.push(sound.port);
+  }
   worker.postMessage(
-    { type: "start", canvas: offscreen, game: chosen.game, blobs: RomSelection.mountBlobs(chosen) },
-    [offscreen]);
+    {
+      type: "start",
+      canvas: offscreen,
+      game: chosen.game,
+      blobs: RomSelection.mountBlobs(chosen),
+      audioPort: sound !== null ? sound.port : null,
+      audioSampleRate: sound !== null ? sound.sampleRate : 0,
+    },
+    transfer);
   // The focus leaves the Start button, which a key would otherwise press.
   start.blur();
   stopInput = PageInput.forwardInput(worker);

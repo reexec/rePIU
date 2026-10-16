@@ -1,6 +1,7 @@
 #ifndef REPIU_PLATFORM_BROWSER_HOST_H_
 #define REPIU_PLATFORM_BROWSER_HOST_H_
 
+#include <cstddef>
 #include <cstdint>
 
 namespace repiu::platform
@@ -70,6 +71,15 @@ struct BrowserInputEvent
 // Takes the oldest input the page sent, if any. Win32, Linux and Node have no
 // page and answer false.
 bool TakeBrowserInputEvent(BrowserInputEvent* event);
+
+// Issue #81. The page's sound: the sample rate of its AudioContext, or 0 when
+// the page asked for no sound (and on Win32, Linux and Node, which have no
+// page). See docs/design/20261017-i081-browser-sound.md, decision 3.
+int BrowserAudioSampleRate();
+
+// Sends `frames` frames of interleaved float stereo to the page's
+// AudioWorklet. Does nothing without a page.
+void SendBrowserAudio(const float* interleaved, std::size_t frames);
 
 }  // namespace repiu::platform
 

@@ -35,6 +35,15 @@ bool YieldToHostEventLoop()
     return false;
 }
 
+int BrowserAudioSampleRate()
+{
+    return 0;
+}
+
+void SendBrowserAudio(const float* /*interleaved*/, std::size_t /*frames*/)
+{
+}
+
 bool TakeBrowserInputEvent(BrowserInputEvent* /*event*/)
 {
     return false;

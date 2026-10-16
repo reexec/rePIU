@@ -493,6 +493,9 @@ target_sources(repiu_exe
         # Issue #72: the window the backend draws into, SDL's or the page's.
         src/engine/glide_host_window_sdl.cpp
         src/engine/glide_host_window_browser.cpp
+        # Issue #81: the audio outputs' streams, and the browser page's mixer.
+        src/engine/host_audio_stream.cpp
+        src/engine/browser_audio_mixer.cpp
         src/engine/glide_osd.cpp
         src/engine/imgui_ui_scale.cpp
         src/engine/glide_post_process.cpp
@@ -1311,6 +1314,7 @@ if(EMSCRIPTEN)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/rom_selection.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/page_input.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/worker.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/audio_worklet.js"
     )
     add_custom_command(TARGET repiu_browser POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${repiu_browser_page}

@@ -1,4 +1,5 @@
 #include "repiu/engine/ymz280b_audio_out.h"
+#include "repiu/engine/host_audio_stream.h"
 
 #include "repiu/sound/ymz280b_device.h"
 #include "repiu/sound/ymz280b_sample_rom.h"
@@ -156,7 +157,6 @@ struct Ymz280bAudioOut::Impl
     std::mutex mutex;
 
     SDL_AudioStream* stream = nullptr;
-    bool audio_subsystem_open = false;
     std::thread worker;
     std::atomic<bool> shutdown{false};
     std::atomic<bool> ready{false};
@@ -268,25 +268,14 @@ bool Ymz280bAudioOut::Open(const std::filesystem::path& rom_zip_path)
     impl_->device.Initialize(rom.data);
     const std::uint32_t sample_rate = impl_->device.output_sample_rate();
 
-    if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
-    {
-        impl_->message =
-            std::string("SDL audio initialization failed: ") + SDL_GetError();
-        std::fprintf(stderr, "[repiu-ymz] %s\n", impl_->message.c_str());
-        return false;
-    }
-    impl_->audio_subsystem_open = true;
-
+    // Issue #81: a device natively, the page's mixer in a browser.
     const SDL_AudioSpec format{SDL_AUDIO_S16LE, 2, static_cast<int>(sample_rate)};
-    impl_->stream = SDL_OpenAudioDeviceStream(
-        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &format, nullptr, nullptr);
+    std::string failure;
+    impl_->stream = OpenHostAudioStream(format, &failure);
     if (impl_->stream == nullptr)
     {
-        impl_->message =
-            std::string("SDL YMZ280B stream creation failed: ") + SDL_GetError();
+        impl_->message = "SDL YMZ280B " + failure;
         std::fprintf(stderr, "[repiu-ymz] %s\n", impl_->message.c_str());
-        SDL_QuitSubSystem(SDL_INIT_AUDIO);
-        impl_->audio_subsystem_open = false;
         return false;
     }
 
@@ -332,18 +321,8 @@ void Ymz280bAudioOut::Close()
     {
         impl_->worker.join();
     }
-    if (impl_->stream != nullptr)
-    {
-        SDL_ClearAudioStream(impl_->stream);
-        SDL_PauseAudioStreamDevice(impl_->stream);
-        SDL_DestroyAudioStream(impl_->stream);
-        impl_->stream = nullptr;
-    }
-    if (impl_->audio_subsystem_open)
-    {
-        SDL_QuitSubSystem(SDL_INIT_AUDIO);
-        impl_->audio_subsystem_open = false;
-    }
+    CloseHostAudioStream(impl_->stream);
+    impl_->stream = nullptr;
     impl_->capture.Close();
 }
 

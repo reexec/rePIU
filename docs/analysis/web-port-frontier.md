@@ -27,7 +27,9 @@ x87 표현은 rex86이 80비트로 구현해 해결됐고, Worker 전제는 단�
 | **키보드·게임패드** (issue #76 단계 4 단위 2의 입력) | **구현됨, 브라우저 안 확인은 사용자 몫.** 페이지가 키(`KeyboardEvent.code`)와 표준 매핑 패드를 Worker로 보내고 엔진이 SDL 이벤트로 바꿔 네이티브 키 배치가 그대로 적용됨. 이름 표 core probe 통과(Win32·Linux·웹), headless Edge에서 F5가 새로고침하지 않음. 게임 안 동전·OSD 반응은 이 PC의 브라우저 파일 읽기가 느려진 탓에 headless로 확인하지 못함 | [설계 #76](../design/20261016-i076-browser-input.md), [로그](../work-logs/20261016-i076-browser-input.md) |
 | **rex86 wasm 번역** (issue #79) | **확인됨(Node).** 웹 빌드가 rex86의 `kWasm` 번역을 켬. pumpitea 60초: 6 → 21 MIPS(약 3.5배), 부팅 끝(입력 폴링 시작)까지 56 → 18초, 단계의 약 94%가 번역. HLE 경계 trace는 인터프리터와 첫 벽시계 의존까지 같고, 경계의 종류·EIP는 6,240개 모두 같음 | [설계 #79](../design/20261016-i079-rex86-wasm-translation.md), [로그](../work-logs/20261016-i079-rex86-wasm-translation.md) |
 
-**다음 단위:** 단계 4 단위 2의 소리(→ AudioWorklet), 단위 3(OPFS 영구 저장, Pages 배포)
+**소리 (issue #81):** 세 오디오 출력을 엔진의 믹서가 섞어 페이지의 AudioWorklet으로 보냄. headless Chrome 5분에 버퍼 약 130 ms, 부족 0회, 게임 소리 도달 확인([설계](../design/20261017-i081-browser-sound.md), [로그](../work-logs/20261017-i081-browser-sound.md)).
+
+**다음 단위:** 단위 3(OPFS 영구 저장, Pages 배포)
 ([설계 #64](../design/20261015-i064-browser-host-single-thread-loop.md)). 실시간을 위한 rex86 번역 범위 확대(x87, REP
 문자열)는 대기 루프를 뺀 장면별 측정이 우선순위를 정합니다.
 
@@ -137,7 +139,9 @@ Worker assumption is decided as a single Worker.
 | **Keyboard and gamepads** (issue #76, the input of phase 4 unit 2) | **implemented; the in-browser check is the user's.** The page sends keys (`KeyboardEvent.code`) and standard-mapping pads to the Worker and the engine turns them into SDL events, so the native key layout applies as it is. The name table passes the core probe (Win32, Linux, web), and in headless Edge F5 does not reload. The coin and the OSD reacting in the game could not be checked headless, because this PC's browser file reads had slowed down | [design #76](../design/20261016-i076-browser-input.md), [log](../work-logs/20261016-i076-browser-input.md) |
 | **rex86 wasm translation** (issue #79) | **confirmed (Node).** The web build turns on rex86's `kWasm` translation. pumpitea over 60 s: 6 → 21 MIPS (about 3.5×), the end of the boot (input polling starts) 56 → 18 s, about 94% of steps translated. The HLE boundary trace matches the interpreter up to the first wall-clock dependence, and the kind and EIP of all 6,240 boundaries match | [design #79](../design/20261016-i079-rex86-wasm-translation.md), [log](../work-logs/20261016-i079-rex86-wasm-translation.md) |
 
-**Next units:** phase 4 unit 2's sound (→ AudioWorklet) and unit 3 (OPFS persistence, Pages deployment) ([design #64](../design/20261015-i064-browser-host-single-thread-loop.md)). Wider rex86 translation for real time
+**Sound (issue #81):** an engine mixer mixes the three audio outputs and sends them to the page's AudioWorklet; over 5 minutes in headless Chrome about 130 ms stayed buffered with no underrun and the game's sound got through ([design](../design/20261017-i081-browser-sound.md), [log](../work-logs/20261017-i081-browser-sound.md)).
+
+**Next unit:** unit 3 (OPFS persistence, Pages deployment) ([design #64](../design/20261015-i064-browser-host-single-thread-loop.md)). Wider rex86 translation for real time
 (the x87, REP strings) is prioritised by per-scene measurements with the wait loops taken out.
 
 ## 1. State — **on hold** (2026-08-28)

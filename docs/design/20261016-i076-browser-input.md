@@ -105,6 +105,20 @@ sequenceDiagram
 3. 브라우저(헤드리스, DevTools 프로토콜로 키 입력): F5가 새로고침하지 않고 COIN1이 들어감(로그의 JAMMA edge·크레딧), Tab으로 OSD.
 4. 게임패드는 사용자 확인(헤드리스에서는 Gamepad API를 흉내 내기 어려움).
 
+## 후속 (2026-10-17): 브라우저의 OSD와 마우스
+
+사용자 확인에서 브라우저의 Tab이 OSD를 열지 않았습니다. 원인은 입력이 아니라 OSD가 만들어지지 않은 것입니다: `GlideOsd`는
+ImGui SDL3 백엔드를 SDL 창에 붙여 초기화하는데, #72의 브라우저 캔버스에는 SDL 창이 없어 "OSD needs a window"로 꺼집니다. 또
+네이티브 OSD는 키보드 탐색을 끄고(#55) 마우스나 패드로 조작하는데, 페이지는 마우스를 넘기지 않았습니다.
+
+* **결정 6: OSD는 SDL 창 없이 연다.** ImGui SDL3 백엔드를 창 없이(null) 초기화합니다. SDL은 없는 창에 대한 호출을 실패로만 돌려주고,
+  백엔드의 창 ID는 0이 되어 브리지가 보내는 이벤트(창 ID 0)와 맞습니다. 화면 크기는 백엔드가 창에서 읽지 못하므로 캔버스의 drawable
+  크기를 매 프레임 넣습니다(배율 1). 렌더러(ImGui OpenGL3)는 #69의 머리말(`#version 300 es`)로 WebGL2에서 그대로 돕니다. 패드
+  조작은 백엔드가 SDL 게임패드(브리지의 가상 게임패드)를 직접 읽으므로 그대로입니다.
+* **결정 7: 페이지는 캔버스 위의 마우스를 넘긴다.** 이동·버튼·휠을 캔버스 화소 좌표(표시 크기와 캔버스 크기의 비로 환산)로 보내고,
+  브리지가 창 ID 0의 SDL 마우스 이벤트로 넣습니다. 백엔드의 이벤트 처리는 그대로(OSD가 열려 있으면 ImGui에, 아니면 더블클릭 =
+  전체 화면, 브라우저 창 구현에서는 아무것도 안 함).
+
 ---
 
 # Design: browser host phase 4 unit 2 — keyboard and gamepad input on the page (issue #76)
@@ -199,6 +213,23 @@ pad that goes away has its virtual joystick detached.
   answer "none".
 * The engine's `src/engine/input/browser_input_bridge.{h,cpp}`: turns what was taken into SDL events and virtual
   gamepads, called before `PumpEvents`'s `SDL_PollEvent` loop. Natively there is nothing to take, so it does nothing.
+
+## Follow-up (2026-10-17): the OSD and the mouse in the browser
+
+In the user's check, Tab did not open the OSD in the browser. The cause is not the input: the OSD is never made.
+`GlideOsd` initialises ImGui's SDL3 backend on an SDL window, and #72's browser canvas has none, so it turns itself off
+with "OSD needs a window". The native OSD also keeps keyboard navigation off (#55) and is driven by mouse or pad, and the
+page sent no mouse.
+
+* **Decision 6: the OSD opens without an SDL window.** ImGui's SDL3 backend is initialised with no window (null). SDL
+  only answers failure for calls on a missing window, and the backend's window id becomes 0, which matches the events the
+  bridge sends (window id 0). The backend cannot read the display size from a window, so the canvas's drawable size is
+  put in every frame (scale 1). The renderer (ImGui OpenGL3) runs on WebGL2 with #69's header (`#version 300 es`). Pad
+  navigation is unchanged: the backend reads SDL gamepads (the bridge's virtual gamepads) itself.
+* **Decision 7: the page forwards the mouse over the canvas.** Moves, buttons and the wheel go in canvas pixels (scaled by
+  the canvas size over the displayed size), and the bridge pushes them as SDL mouse events with window id 0. The backend's
+  event handling stays as it is (to ImGui while the OSD is open; otherwise a double click means fullscreen, which the
+  browser window implementation ignores).
 
 ## What does not change
 

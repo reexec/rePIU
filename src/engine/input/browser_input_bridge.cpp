@@ -93,6 +93,11 @@ void BrowserInputBridge::Pump()
             case BrowserInputEvent::Kind::kPad:
                 UpdatePad(event);
                 break;
+            case BrowserInputEvent::Kind::kMouseMove:
+            case BrowserInputEvent::Kind::kMouseButton:
+            case BrowserInputEvent::Kind::kMouseWheel:
+                PushMouse(event);
+                break;
             case BrowserInputEvent::Kind::kPadRemoved:
                 RemovePad(event.pad);
                 break;
@@ -129,6 +134,48 @@ void BrowserInputBridge::PushKey(const BrowserInputEvent& event)
     {
         ++keys_pushed_;
     }
+}
+
+// SDL mouse events with window id 0, which is what ImGui's SDL3 backend has
+// when the OSD runs with no window (design #76 decision 7).
+void BrowserInputBridge::PushMouse(const BrowserInputEvent& event)
+{
+    SDL_Event mouse{};
+    const Uint64 timestamp = TimestampOf(event);
+    const float x = static_cast<float>(event.mouse_x);
+    const float y = static_cast<float>(event.mouse_y);
+    if (event.kind == BrowserInputEvent::Kind::kMouseMove)
+    {
+        mouse.type = SDL_EVENT_MOUSE_MOTION;
+        mouse.motion.timestamp = timestamp;
+        mouse.motion.windowID = 0U;
+        mouse.motion.x = x;
+        mouse.motion.y = y;
+    }
+    else if (event.kind == BrowserInputEvent::Kind::kMouseButton)
+    {
+        mouse.type = event.down ? SDL_EVENT_MOUSE_BUTTON_DOWN
+                                : SDL_EVENT_MOUSE_BUTTON_UP;
+        mouse.button.timestamp = timestamp;
+        mouse.button.windowID = 0U;
+        mouse.button.button = event.pad;
+        mouse.button.down = event.down;
+        mouse.button.clicks = event.clicks;
+        mouse.button.x = x;
+        mouse.button.y = y;
+    }
+    else
+    {
+        mouse.type = SDL_EVENT_MOUSE_WHEEL;
+        mouse.wheel.timestamp = timestamp;
+        mouse.wheel.windowID = 0U;
+        mouse.wheel.x = static_cast<float>(event.wheel_x);
+        mouse.wheel.y = static_cast<float>(event.wheel_y);
+        mouse.wheel.integer_x = event.wheel_x;
+        mouse.wheel.integer_y = event.wheel_y;
+        mouse.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
+    }
+    SDL_PushEvent(&mouse);
 }
 
 void BrowserInputBridge::PushFocusLost()

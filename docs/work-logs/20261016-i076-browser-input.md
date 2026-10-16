@@ -67,6 +67,25 @@ texture-download-backend-failure`로 기록됩니다(`glTexImage2D` 뒤 `glGetEr
   그 전에 처리되어 상관없습니다.
 * 단계 4 단위 2의 소리(AudioWorklet).
 
+## 2026-10-17 — 후속: 브라우저의 OSD와 마우스
+
+브랜치 `task/i076-browser-osd`(main `fca6380`, v0.0.227에서). 사용자 확인에서 Tab이 OSD를 열지 않았습니다. 원인은 입력이 아니라 OSD가
+만들어지지 않은 것이었습니다(SDL 창이 없어 "OSD needs a window"). 설계의 후속 결정 6·7.
+
+| 부분 | 내용 |
+|---|---|
+| `GlideOsd` | SDL 창이 없으면 ImGui SDL3 백엔드를 창 없이 초기화(SDL 비디오가 없으면 dummy로 올림), 매 프레임 화면 크기를 캔버스 drawable 크기로(`SetDisplaySize`, 배율 1) |
+| 백엔드 | `ApplyDrawableViewport`에서 OSD에 drawable 크기를 알림 |
+| 플랫폼·브리지 | 입력 종류에 마우스 이동·버튼·휠, 브리지가 창 ID 0의 SDL 마우스 이벤트로 넣음 |
+| 페이지 | 캔버스 위의 마우스를 그리기 화소 좌표로 보냄(오른쪽 클릭 메뉴와 휠 스크롤은 막음) |
+| 페이지(소리) | `AudioContext.resume()`을 기다리지 않음. 브라우저가 소리를 허락하지 않으면 끝나지 않아 게임 시작까지 막혔음(headless에서 자동 재생 플래그 없이 확인). 다음 클릭·키에 다시 시도 |
+
+**확인(headless Chrome):** Tab에 `[repiu-pad] OSD open`, 캡처에 OSD(렌더러 WebGL 2.0, 옵션, 셰이더). OSD가 열린 채 "Keep aspect ratio"
+체크박스를 클릭하자 `[repiu-glide] keep aspect ratio off`. 자동 재생 플래그 없이도 게임이 시작됨.
+
+**회귀:** Win32 Release core probe·`--opengl-post-shader`(네이티브 OSD 경로는 창이 있어 바뀌지 않음), 웹 core probe. Win32 Debug·`emulated`,
+Linux x64·i386 모두 빌드와 core probe 통과.
+
 ---
 
 # Work log: browser host phase 4 unit 2 — keyboard and gamepads on the page (issue #76)
@@ -139,3 +158,24 @@ returning an error left by an earlier call. It gets its own issue.
 * For ImGui to take keys while the OSD is open the window ID has to match, but the browser has no SDL window, so keys go with
   `windowID` 0. The OSD toggle (Tab) is handled before that and is unaffected.
 * Phase 4 unit 2's sound (AudioWorklet).
+
+## 2026-10-17 — follow-up: the OSD and the mouse in the browser
+
+Branch `task/i076-browser-osd` (main `fca6380`, from v0.0.227). In the user's check Tab did not open the OSD. The cause
+was not the input: the OSD was never made (no SDL window, "OSD needs a window"). The design's follow-up decisions 6 and 7.
+
+| Part | Content |
+|---|---|
+| `GlideOsd` | with no SDL window, ImGui's SDL3 backend is initialised with none (SDL's dummy video brought up if absent), and every frame the display size is the canvas's drawable size (`SetDisplaySize`, scale 1) |
+| Backend | `ApplyDrawableViewport` tells the OSD the drawable size |
+| Platform and bridge | mouse move, button and wheel input kinds; the bridge pushes them as SDL mouse events with window id 0 |
+| Page | the mouse over the canvas goes in drawing pixels (the context menu and wheel scrolling are stopped) |
+| Page (sound) | `AudioContext.resume()` is no longer awaited: when the browser holds sound back it never settles, which kept the game from starting (seen in headless without the autoplay flag). The next click or key tries again |
+
+**Checked (headless Chrome):** Tab gives `[repiu-pad] OSD open` and the capture shows the OSD (renderer WebGL 2.0, options,
+shaders). With the OSD open, clicking the "Keep aspect ratio" checkbox gives `[repiu-glide] keep aspect ratio off`. The
+game starts without the autoplay flag.
+
+**Regressions:** Win32 Release core probe and `--opengl-post-shader` (the native OSD has a window and does not change), web
+core probe. Win32 Debug and `emulated`, and Linux x64 and i386: build and core probe pass.
+

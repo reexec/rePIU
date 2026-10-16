@@ -42,6 +42,10 @@ struct BrowserInputEvent
         kFocusLost,
         kPad,
         kPadRemoved,
+        // Issue #76 follow-up: the mouse over the page's canvas, for the OSD.
+        kMouseMove,
+        kMouseButton,
+        kMouseWheel,
     };
     // Bits of `modifiers`.
     static constexpr std::uint8_t kShift = 0x01U;
@@ -66,6 +70,16 @@ struct BrowserInputEvent
     std::uint32_t buttons = 0;
     std::int16_t axes[4] = {};
     std::int16_t triggers[2] = {};
+
+    // kMouseMove and kMouseButton: where, in the canvas's pixels.
+    // kMouseButton: which (1 left, 2 middle, 3 right) in `pad`, `down`, and
+    // `clicks` 2 for a double click. kMouseWheel: notches,
+    // up and right positive.
+    std::int16_t mouse_x = 0;
+    std::int16_t mouse_y = 0;
+    std::uint8_t clicks = 1;
+    std::int16_t wheel_x = 0;
+    std::int16_t wheel_y = 0;
 };
 
 // Takes the oldest input the page sent, if any. Win32, Linux and Node have no

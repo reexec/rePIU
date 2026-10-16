@@ -44,8 +44,22 @@
     return { kind: "pad", index, buttons, axes, triggers: [trigger(6), trigger(7)] };
   }
 
-  // Starts sending this page's input to `worker`; returns a function that stops it.
-  function forwardInput(worker) {
+  // Where a mouse event lands on `surface`, in the drawing buffer's pixels:
+  // the canvas is laid out at one size and draws at another.
+  function canvasPoint(event, surface) {
+    const box = surface.element.getBoundingClientRect();
+    const x = box.width > 0 ? (event.clientX - box.left) * surface.width / box.width : 0;
+    const y = box.height > 0 ? (event.clientY - box.top) * surface.height / box.height : 0;
+    return {
+      x: Math.max(0, Math.min(surface.width - 1, Math.round(x))),
+      y: Math.max(0, Math.min(surface.height - 1, Math.round(y))),
+    };
+  }
+
+  // Starts sending this page's input to `worker`; returns a function that stops
+  // it. `surface` ({ element, width, height }: the canvas and its drawing size)
+  // gets its mouse forwarded too, for the OSD (issue #76 follow-up).
+  function forwardInput(worker, surface) {
     const send = (events) => worker.postMessage({ type: "input", events });
 
     const onKey = (event) => {
@@ -103,19 +117,67 @@
       }
     };
 
+    // The mouse over the canvas: moves, buttons (1 left, 2 middle, 3 right, as
+    // SDL numbers them) and the wheel, in the canvas's drawing pixels.
+    const time = (event) => performance.timeOrigin + event.timeStamp;
+    const onMouseMove = (event) => {
+      const point = canvasPoint(event, surface);
+      send([{ kind: "mouse-move", x: point.x, y: point.y, time: time(event) }]);
+    };
+    const onMouseButton = (event) => {
+      if (event.button > 2) {
+        return;
+      }
+      event.preventDefault();
+      const point = canvasPoint(event, surface);
+      send([{
+        kind: "mouse-button",
+        index: [1, 2, 3][event.button],
+        down: event.type === "mousedown",
+        clicks: Math.min(Math.max(event.detail, 1), 255),
+        x: point.x,
+        y: point.y,
+        time: time(event),
+      }]);
+    };
+    const onWheel = (event) => {
+      event.preventDefault();
+      send([{
+        kind: "mouse-wheel",
+        wheelX: Math.sign(event.deltaX),
+        wheelY: -Math.sign(event.deltaY),
+        time: time(event),
+      }]);
+    };
+    const onContextMenu = (event) => event.preventDefault();
+
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKey);
     window.addEventListener("blur", onFocusLost);
     document.addEventListener("visibilitychange", onVisibility);
+    if (surface) {
+      surface.element.addEventListener("mousemove", onMouseMove);
+      surface.element.addEventListener("mousedown", onMouseButton);
+      surface.element.addEventListener("mouseup", onMouseButton);
+      surface.element.addEventListener("wheel", onWheel, { passive: false });
+      surface.element.addEventListener("contextmenu", onContextMenu);
+    }
     frame = requestAnimationFrame(samplePads);
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKey);
       window.removeEventListener("blur", onFocusLost);
       document.removeEventListener("visibilitychange", onVisibility);
+      if (surface) {
+        surface.element.removeEventListener("mousemove", onMouseMove);
+        surface.element.removeEventListener("mousedown", onMouseButton);
+        surface.element.removeEventListener("mouseup", onMouseButton);
+        surface.element.removeEventListener("wheel", onWheel);
+        surface.element.removeEventListener("contextmenu", onContextMenu);
+      }
       cancelAnimationFrame(frame);
     };
   }
 
-  root.PageInput = { forwardInput, isGameKey, padState };
+  root.PageInput = { forwardInput, isGameKey, padState, canvasPoint };
 })(typeof self !== "undefined" ? self : this);

@@ -28,11 +28,20 @@ bool GlideOsd::Initialize(void* sdl_window, void* gl_context,
     {
         return true;
     }
-    if (sdl_window == nullptr || gl_context == nullptr)
+    // Issue #76 (design decision 6): in a browser page's Worker there is no
+    // SDL window, only the page's canvas. ImGui's SDL3 backend then runs with
+    // none: SDL answers failure for a missing window, the backend's window id
+    // is 0 like the events the browser input bridge pushes, and the display
+    // size comes from SetDisplaySize. The backend reads the name of SDL's
+    // video driver, so SDL's (dummy) video must be up.
+    windowless_ = sdl_window == nullptr;
+    if (windowless_ && SDL_GetCurrentVideoDriver() == nullptr &&
+        !SDL_InitSubSystem(SDL_INIT_VIDEO))
     {
         if (message != nullptr)
         {
-            *message = "OSD needs a window and a current GL context";
+            *message = std::string("OSD without a window needs SDL video: ") +
+                SDL_GetError();
         }
         return false;
     }
@@ -202,6 +211,12 @@ void GlideOsd::Render(std::atomic<bool>* lfb_high_precision,
     }
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
+    if (windowless_)
+    {
+        // No window to read it from: the canvas's drawable size, unscaled.
+        ImGui::GetIO().DisplaySize = ImVec2(display_width_, display_height_);
+        ImGui::GetIO().DisplayFramebufferScale = ImVec2(1.0F, 1.0F);
+    }
     // #15: the SDL backend has just set the display size, so the scale for
     // this frame is known before ImGui lays anything out.
     ImGuiIO& io = ImGui::GetIO();

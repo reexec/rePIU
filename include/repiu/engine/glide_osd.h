@@ -60,6 +60,13 @@ public:
                     const char* glsl_version, std::string* message);
     void Shutdown();
     bool initialized() const { return initialized_; }
+    // Issue #76: with no SDL window (a browser page's canvas), the size the
+    // overlay lays out in, in drawable pixels. Ignored with a window.
+    void SetDisplaySize(float width, float height)
+    {
+        display_width_ = width;
+        display_height_ = height;
+    }
 
     bool visible() const { return visible_; }
     // Issue #55: opening also gives the overlay focus, so a pad's D-pad moves
@@ -100,6 +107,9 @@ public:
 
 private:
     bool initialized_ = false;
+    bool windowless_ = false;
+    float display_width_ = 0.0F;
+    float display_height_ = 0.0F;
     bool visible_ = false;
     // Issue #55: focus to give on the next frame, and whether a menu was open
     // on the last one (B then closes the menu rather than the overlay).

@@ -192,8 +192,20 @@ async function startSound() {
           `${stats.receivedSeconds.toFixed(1)} s received`;
       }
     };
-    if (context.state === "suspended") {
-      await context.resume();
+    // Never waited on: when the browser holds sound back (no gesture it
+    // accepts) resume() does not settle, and the game must start anyway. The
+    // next click or key on the page tries again.
+    if (context.state !== "running") {
+      context.resume();
+      const retry = () => {
+        context.resume();
+        if (context.state === "running") {
+          window.removeEventListener("pointerdown", retry);
+          window.removeEventListener("keydown", retry);
+        }
+      };
+      window.addEventListener("pointerdown", retry);
+      window.addEventListener("keydown", retry);
     }
     soundLine.textContent = `Sound: ${context.sampleRate} Hz, waiting for the engine`;
     return { port: channel.port2, sampleRate: context.sampleRate };
@@ -216,6 +228,8 @@ start.addEventListener("click", async () => {
   }
   showStatus(`Starting ${chosen.game}...`, false);
   startClock();
+  // The drawing size, read before the canvas is handed over.
+  const surface = { element: canvas, width: canvas.width, height: canvas.height };
   const offscreen = canvas.transferControlToOffscreen();
   const worker = new Worker("worker.js");
   worker.onmessage = (event) => {
@@ -259,5 +273,5 @@ start.addEventListener("click", async () => {
     transfer);
   // The focus leaves the Start button, which a key would otherwise press.
   start.blur();
-  stopInput = PageInput.forwardInput(worker);
+  stopInput = PageInput.forwardInput(worker, surface);
 });

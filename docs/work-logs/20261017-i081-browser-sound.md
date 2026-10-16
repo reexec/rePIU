@@ -43,7 +43,7 @@
 
 ### 남은 것
 
-* ~~사용자 청취 확인~~ — 2026-10-17 사용자가 브라우저(Windows emsdk 빌드)에서 소리가 나오는 것을 확인함.
+* ~~사용자 청취 확인~~ — 2026-10-17 사용자가 브라우저에서 소리가 나오는 것을 확인함.
 * 게임이 느린 동안의 음악 끊김은 처리량(#79 이후 rex86 작업)의 문제.
 
 ---
@@ -95,5 +95,5 @@ Branch `task/i081-browser-sound` (main `7539353`, from v0.0.226).
 
 ### Remaining
 
-* ~~The user's listening check~~ — on 2026-10-17 the user heard the sound in their browser (the Windows emsdk build).
+* ~~The user's listening check~~ — on 2026-10-17 the user heard the sound in their browser.
 * Music breaking up while the game is slow is a throughput matter (rex86 work after #79).

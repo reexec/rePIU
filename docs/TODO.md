@@ -46,6 +46,8 @@ Task 492~495의 JAMMA 입력 timing, IRQ0 replay, 2P 숫자패드 별칭과 hist
   **단계 4 단위 1 — issue #72:** 브라우저 페이지의 Worker에서 pumpitea가 WebGL2 캔버스에 타이틀·데모 플레이까지
   나옵니다([설계](design/20261016-i072-browser-page.md)). **단계 4 단위 2의 입력 — issue #76:** 페이지의 키와 게임패드가
   SDL 이벤트로 엔진에 들어가 네이티브 키 배치가 그대로 적용됩니다([설계](design/20261016-i076-browser-input.md)).
+  **rex86 wasm 번역 — issue #79:** 웹 빌드가 rex86의 wasm 번역을 켜 Node pumpitea가 약 3.5배(6 → 21 MIPS) 빨라졌습니다
+  ([설계](design/20261016-i079-rex86-wasm-translation.md)). 다음 rex86 작업은 인터프리터로 나가는 명령의 내역과 블록 길이로 고릅니다.
   **다음:** 단계 4 단위 2의 소리, 단위 3(OPFS, Pages), 그리고 대기 루프를 뺀 장면별 처리량 측정과 rex86 번역 범위
   확대(x87, REP 문자열).
 
@@ -126,6 +128,9 @@ units in [`work-orders/`](work-orders/), and completed results and verification 
   pumpitea reaches its title and demo play on a WebGL2 canvas ([design](design/20261016-i072-browser-page.md)).
   **Phase 4 unit 2's input -- issue #76:** the page's keys and gamepads reach the engine as SDL events, so the native key
   layout applies as it is ([design](design/20261016-i076-browser-input.md)).
+  **rex86 wasm translation -- issue #79:** the web build turns on rex86's wasm translation, and Node pumpitea runs about
+  3.5× faster (6 → 21 MIPS) ([design](design/20261016-i079-rex86-wasm-translation.md)). The next rex86 work is chosen
+  from what the interpreter exits are and from block length.
   **Next:** phase 4 unit 2's sound, unit 3 (OPFS, Pages), per-scene throughput measured with the wait loops taken
   out, and wider rex86 translation (the x87, REP strings).
 

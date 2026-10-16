@@ -792,6 +792,11 @@ target_compile_definitions(repiu_exe
 target_link_libraries(repiu_exe PRIVATE repiu_zydis chdr-static)
 if(REPIU_EXECUTION_MODEL STREQUAL "emulated")
     target_link_libraries(repiu_exe PRIVATE rex86::core)
+    # Issue #79: the web build runs the guest on rex86's wasm translation,
+    # whose module installer (and its JavaScript library) is rex86_host_web.
+    if(EMSCRIPTEN)
+        target_link_libraries(repiu_exe PRIVATE rex86_host_web)
+    endif()
 endif()
 
 # PUBLIC, not PRIVATE: SDL_Keycode and SDL_Keymod appear in the public input

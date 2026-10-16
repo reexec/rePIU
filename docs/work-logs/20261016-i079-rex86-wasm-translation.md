@@ -70,7 +70,7 @@ Node, pumpitea, 60초, 번갈아. "입력 폴링 시작"은 부팅이 끝나 게
 
 ### 남은 것
 
-* **브라우저 확인**(위).
+* ~~**브라우저 확인**(위)~~ — 2026-10-17 사용자가 자기 브라우저에서 게임 실행을 확인함.
 * **인터프리터로 나가는 곳의 내역.** rex86의 통계는 합계만 줍니다. 어느 명령(x87, REP 문자열, 세그먼트 접두 등)이 번역 밖인지
   명령별로 세어야 다음 rex86 작업을 고를 수 있습니다. rex86 쪽 진단 추가가 필요합니다.
 * **블록 길이.** 블록 실행당 6.3단계. 블록을 잇는 연결(chaining)이나 더 긴 블록이 디스패치 비용을 줄일 수 있는지.
@@ -156,7 +156,7 @@ browser, and the time to the title, are left to check in the user's browser.
 
 ### Left
 
-* **The browser check** (above).
+* ~~**The browser check** (above)~~ — on 2026-10-17 the user confirmed the game runs in their own browser.
 * **What the interpreter exits are.** rex86's statistics give totals only. Which instructions fall outside translation
   (the x87, REP strings, segment prefixes and so on) has to be counted per instruction to choose the next rex86 work; that
   needs a diagnostic on rex86's side.

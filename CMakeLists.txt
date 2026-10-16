@@ -407,6 +407,7 @@ target_sources(repiu_exe
         src/engine/input/sdl_bios_keyboard_adapter.cpp
         src/engine/input/active_jamma_bindings.cpp
         src/engine/input/sdl_pad_input.cpp
+        src/engine/input/browser_input_bridge.cpp
         src/engine/execution/execution_probe_memory_dump.cpp
         src/engine/execution/execution_trampoline.cpp
         src/engine/execution/host_turn.cpp

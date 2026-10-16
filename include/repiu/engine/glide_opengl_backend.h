@@ -648,6 +648,9 @@ private:
     // closed with the window. Host thread only; a pointer for the same reason
     // as above.
     std::unique_ptr<class SdlPadInput> pad_input_;
+    // Issue #76: the browser page's keys and gamepads, put into SDL before
+    // the events are polled. Does nothing natively. Host thread only.
+    std::unique_ptr<class BrowserInputBridge> browser_input_;
     // Task 761: the in-game OSD, created with the window and destroyed with
     // it. Null in dummy mode. Host thread only.
     std::unique_ptr<class GlideOsd> osd_;

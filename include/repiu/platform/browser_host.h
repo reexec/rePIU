@@ -1,6 +1,8 @@
 #ifndef REPIU_PLATFORM_BROWSER_HOST_H_
 #define REPIU_PLATFORM_BROWSER_HOST_H_
 
+#include <cstdint>
+
 namespace repiu::platform
 {
 
@@ -27,6 +29,47 @@ BrowserGlFunction BrowserGlProcAddress(const char* name);
 // what was drawn and messages are handled -- and returns when it is given
 // back. Does nothing unless the page asked for yields; true when it yielded.
 bool YieldToHostEventLoop();
+
+// Issue #76. One input the page forwarded to this Worker: a key, the page
+// losing focus, or a gamepad's state. See
+// docs/design/20261016-i076-browser-input.md.
+struct BrowserInputEvent
+{
+    enum class Kind : std::uint8_t
+    {
+        kKey,
+        kFocusLost,
+        kPad,
+        kPadRemoved,
+    };
+    // Bits of `modifiers`.
+    static constexpr std::uint8_t kShift = 0x01U;
+    static constexpr std::uint8_t kControl = 0x02U;
+    static constexpr std::uint8_t kAlt = 0x04U;
+    static constexpr std::uint8_t kMeta = 0x08U;
+
+    Kind kind = Kind::kKey;
+    // kKey: KeyboardEvent.code, pressed or released, an auto-repeat, and the
+    // modifiers held.
+    char code[32] = {};
+    bool down = false;
+    bool repeat = false;
+    std::uint8_t modifiers = 0;
+    // How long before it was taken the page saw it; zero when not known.
+    std::uint64_t age_nanoseconds = 0;
+    // kPad and kPadRemoved: the page's gamepad index. kPad: bit i of
+    // `buttons` is the standard mapping's button i; the sticks' axes (left x,
+    // left y, right x, right y) and the triggers (left, right) are scaled to
+    // SDL's ranges.
+    std::uint8_t pad = 0;
+    std::uint32_t buttons = 0;
+    std::int16_t axes[4] = {};
+    std::int16_t triggers[2] = {};
+};
+
+// Takes the oldest input the page sent, if any. Win32, Linux and Node have no
+// page and answer false.
+bool TakeBrowserInputEvent(BrowserInputEvent* event);
 
 }  // namespace repiu::platform
 

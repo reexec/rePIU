@@ -21,6 +21,7 @@
 #include "sdl_bios_keyboard_adapter.h"
 #include "sdl_input_script.h"
 #include "sdl_pad_input.h"
+#include "browser_input_bridge.h"
 #include "repiu/platform/host_gpu_driver.h"
 
 
@@ -1495,6 +1496,13 @@ void GlideOpenGlBackend::PumpEvents() {
     pad_input_ = std::make_unique<SdlPadInput>();
     pad_input_->Initialize();
   }
+  // Issue #76: what the browser page sent becomes SDL events here, after the
+  // gamepad subsystem is up (its virtual gamepads need it) and before the
+  // events are polled, so the path below handles them as a window's.
+  if (browser_input_ == nullptr) {
+    browser_input_ = std::make_unique<BrowserInputBridge>();
+  }
+  browser_input_->Pump();
   SDL_Event event{};
   while (SDL_PollEvent(&event)) {
     // Task 761: Tab belongs to the OSD alone; it never reaches game input.
@@ -3330,6 +3338,15 @@ void GlideOpenGlBackend::Close() {
             static_cast<unsigned long long>(
                 input_script_->player.pushed_events()));
     input_script_.reset();
+  }
+  // Issue #76: the browser's virtual gamepads go first, while the gamepad
+  // subsystem the pads hold is still up.
+  if (browser_input_ != nullptr) {
+    if (browser_input_->keys_pushed() != 0U) {
+      fprintf(stderr, "[repiu-browser-input] pushed %llu key events\n",
+              static_cast<unsigned long long>(browser_input_->keys_pushed()));
+    }
+    browser_input_.reset();
   }
   // Issue #34: close the pads with the window.
   pad_input_.reset();

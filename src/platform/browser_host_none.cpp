@@ -35,4 +35,9 @@ bool YieldToHostEventLoop()
     return false;
 }
 
+bool TakeBrowserInputEvent(BrowserInputEvent* /*event*/)
+{
+    return false;
+}
+
 }  // namespace repiu::platform

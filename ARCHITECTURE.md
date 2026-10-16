@@ -4945,7 +4945,9 @@ chose no driver).
   실행하고(Win32, Linux i386), `cache`는 번역한 long mode 코드 캐시를 실행하며(Linux x64), `emulated`는
   rex86 CPU 코어가 게스트를 실행하고(issue #61: 웹과 ARM 호스트용, Win32에서
   `-DREPIU_EXECUTION_MODEL_OVERRIDE=emulated`로 개발용 빌드), 웹 빌드도 `emulated`입니다(issue #67, 그 전까지는
-  게스트를 실행하지 않는 `none`). 공용 코드는 `include/repiu/runtime/execution_model.h`의 함수
+  게스트를 실행하지 않는 `none`). 웹의 `emulated`는 issue #79부터 rex86의 wasm 번역(`kWasm`, 설치기 `rex86_host_web`)으로
+  게스트 블록을 돌리고, 번역하지 못한 명령만 인터프리터가 돕니다(Node pumpitea에서 단계의 약 94%가 번역, 약 3.5배).
+  `REPIU_REX86_TRANSLATION=off`로 끕니다. 네이티브 `emulated`는 인터프리터만입니다. 공용 코드는 `include/repiu/runtime/execution_model.h`의 함수
   (`RunsGuestBytesDirectly`, `RunsLongModeCodeCache`, `RunsGuestOnEmulatedCpu`, `RunsHostOnOneThread`,
   `LongModeReturnThunkAddress`,
   `InjectsTicksDuringSwapWait`)로 묻고, 구현은 `src/runtime/execution_model_{direct,cache,emulated}.cpp`입니다.
@@ -5011,7 +5013,10 @@ differs by host goes to one of two places.
   process as they are (Win32, Linux i386), `cache` runs the translated long-mode code cache (Linux x64),
   `emulated` has the rex86 CPU core run the guest (issue #61: for the web and ARM hosts, built on Win32
   for development with `-DREPIU_EXECUTION_MODEL_OVERRIDE=emulated`), and the web build is `emulated` too
-  (issue #67; until then it was `none`, which ran no guest). Shared code asks through the functions of `include/repiu/runtime/execution_model.h`
+  (issue #67; until then it was `none`, which ran no guest). Since issue #79 the web's `emulated` runs guest blocks on
+  rex86's wasm translation (`kWasm`, with the `rex86_host_web` installer), the interpreter taking only what is not
+  translated (about 94% of steps translated in Node pumpitea, about 3.5× faster); `REPIU_REX86_TRANSLATION=off` turns it
+  off. Native `emulated` is the interpreter alone. Shared code asks through the functions of `include/repiu/runtime/execution_model.h`
   (`RunsGuestBytesDirectly`, `RunsLongModeCodeCache`, `RunsGuestOnEmulatedCpu`,
   `RunsHostOnOneThread`, `LongModeReturnThunkAddress`, `InjectsTicksDuringSwapWait`), implemented in
   `src/runtime/execution_model_{direct,cache,emulated}.cpp`. CMake's `REPIU_EXECUTION_MODEL` picks.

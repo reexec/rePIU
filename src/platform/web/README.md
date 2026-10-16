@@ -11,6 +11,12 @@
 `-sGLOBAL_BASE=0x10000000`으로 그 위에 둡니다. 그래서 가상 메모리가 stub에서 실제 구현이 되었습니다
 ([설계 #67](../../../docs/design/20261015-i067-emscripten-headless.md)).
 
+**issue #79부터 게스트 블록은 rex86의 wasm 번역으로 돕니다.** 웹 빌드가 rex86의 `rex86_host_web`(동기 모듈 설치기와 그 JS
+라이브러리)을 링크하고, 트램펄린이 `Cpu`에 `kWasm`을 켭니다. Node pumpitea에서 단계의 약 94%가 번역 안에서 돌고 약 3.5배
+빠릅니다. `REPIU_REX86_TRANSLATION=off`는 인터프리터만, `REPIU_REX86_TRANSLATION_THRESHOLD`는 번역 전 진입 횟수(기본 32)입니다.
+실행 끝에 `[repiu-emulated] translation wasm …` 한 줄이 번역 통계를 줍니다
+([설계 #79](../../../docs/design/20261016-i079-rex86-wasm-translation.md)).
+
 | 파일 | 성격 |
 |---|---|
 | `safe_memory_copy.cpp` | 실제 구현 — 선형 메모리 범위 검사. wasm은 범위 밖 접근이 **복구 불가능한 트랩**이므로 검사가 유일한 안전망입니다 |
@@ -92,6 +98,13 @@ rex86 CPU core, so guest memory sits at the same addresses in linear memory (ide
 Emscripten's data, stack and heap sit above it through the link option `-sGLOBAL_BASE=0x10000000`.
 That is why the virtual memory went from a stub to an implementation
 ([design #67](../../../docs/design/20261015-i067-emscripten-headless.md)).
+
+**Since issue #79 guest blocks run on rex86's wasm translation.** The web build links rex86's `rex86_host_web` (the
+synchronous module installer and its JS library), and the trampoline turns `kWasm` on in its `Cpu`. In Node pumpitea about
+94% of steps run translated, about 3.5× faster. `REPIU_REX86_TRANSLATION=off` keeps the interpreter alone, and
+`REPIU_REX86_TRANSLATION_THRESHOLD` is the entries before a block is translated (32 by default). At the end of a run one
+`[repiu-emulated] translation wasm …` line gives the translation statistics
+([design #79](../../../docs/design/20261016-i079-rex86-wasm-translation.md)).
 
 | File | Nature |
 |---|---|

@@ -85,6 +85,28 @@ EM_ASYNC_JS(void, RepiuBrowserYield, (), {
     });
 });
 
+// Issue #87. A timer for all but the last millisecond, then MessageChannel
+// rounds up to the deadline: a timer only keeps whole milliseconds and a
+// Worker clamps nested ones to 4 ms, so a late wake-up is what the next
+// frame's deadline makes up rather than what this one waits for.
+EM_ASYNC_JS(void, RepiuBrowserWait, (int microseconds), {
+    const deadline = performance.now() + microseconds / 1000;
+    const remaining = deadline - performance.now();
+    if (remaining > 2) {
+        await new Promise((resolve) => setTimeout(resolve, Math.floor(remaining - 1)));
+    }
+    while (performance.now() < deadline) {
+        await new Promise((resolve) => {
+            const channel = new MessageChannel();
+            channel.port1.onmessage = () => {
+                channel.port1.close();
+                resolve();
+            };
+            channel.port2.postMessage(0);
+        });
+    }
+});
+
 // Issue #76. worker.js queues what the page sends in `Module.repiuInput`
 // (an array, oldest first). One item per call: `ints` gets kind, down,
 // repeat, modifiers, pad, buttons, four axes, two triggers, and how long ago
@@ -180,6 +202,16 @@ bool YieldToHostEventLoop()
         return false;
     }
     RepiuBrowserYield();
+    return true;
+}
+
+bool WaitInHostEventLoop(const std::uint32_t microseconds)
+{
+    if (RepiuBrowserYieldWanted() == 0)
+    {
+        return false;
+    }
+    RepiuBrowserWait(static_cast<int>(microseconds));
     return true;
 }
 

@@ -1094,6 +1094,18 @@ std::uint64_t GlideOpenGlBackend::presented_frame_total() const {
   return presented_frame_total_;
 }
 
+bool GlideOpenGlBackend::TakeFrameHold(
+    std::chrono::steady_clock::time_point* const until) {
+  if (!frame_hold_pending_) {
+    return false;
+  }
+  frame_hold_pending_ = false;
+  if (until != nullptr) {
+    *until = frame_hold_until_;
+  }
+  return true;
+}
+
 std::uint64_t GlideOpenGlBackend::presented_frame_span_milliseconds() const {
   if (presented_frame_total_ == 0) {
     return 0;
@@ -1355,19 +1367,32 @@ bool GlideOpenGlBackend::OpenWindowed(std::uint32_t logical_width,
   const std::uint32_t pacing_period_us =
       ResolveGlideSwapPacingPeriodMicroseconds(
           requested_interval, glide_swap_interval_policy_.refresh_rate_hz);
-  if (!honoured && pacing_period_us != 0U) {
+  // Issue #87: a window that leaves the wait to the host loop (a browser
+  // canvas) is paced the same way, the loop waiting for each deadline.
+  swap_wait_deferred_ = host_window_->DefersSwapWait();
+  frame_hold_pending_ = false;
+  if ((!honoured || swap_wait_deferred_) && pacing_period_us != 0U) {
     glide_swap_interval_policy_.pacing_active = true;
     glide_swap_interval_policy_.pacing_period_us = pacing_period_us;
     swap_pacing_enabled_ = true;
     swap_pacing_period_ = std::chrono::microseconds(pacing_period_us);
     swap_pacing_deadline_valid_ = false;
-    fprintf(stderr,
-            "[repiu-glide-swap] driver refused swap interval %d (%s); "
-            "pacing swaps every %u us (display %.2f Hz)\n",
-            static_cast<int>(requested_interval),
-            glide_swap_interval_policy_.failure,
-            static_cast<unsigned>(pacing_period_us),
-            glide_swap_interval_policy_.refresh_rate_hz);
+    if (swap_wait_deferred_) {
+      fprintf(stderr,
+              "[repiu-glide-swap] the window leaves the swap wait to the "
+              "host loop; holding frames every %u us\n",
+              static_cast<unsigned>(pacing_period_us));
+    } else {
+      fprintf(stderr,
+              "[repiu-glide-swap] driver refused swap interval %d (%s); "
+              "pacing swaps every %u us (display %.2f Hz)\n",
+              static_cast<int>(requested_interval),
+              glide_swap_interval_policy_.failure,
+              static_cast<unsigned>(pacing_period_us),
+              glide_swap_interval_policy_.refresh_rate_hz);
+    }
+  } else {
+    swap_wait_deferred_ = false;
   }
   // Task 370: prefer asynchronous reporting. When the driver provides it the
   // frame check is removed entirely; otherwise it falls back to sampling. An
@@ -1755,6 +1780,15 @@ void GlideOpenGlBackend::PaceSwapAfterPresent(
         glide_swap_interval_policy_.late_max_us) {
       glide_swap_interval_policy_.late_max_us = static_cast<std::uint64_t>(late);
     }
+  }
+  // Issue #87: the host loop waits; the wait it reports is not counted here.
+  if (swap_wait_deferred_) {
+    if (swap_pacing_deadline_ > now) {
+      frame_hold_until_ = swap_pacing_deadline_;
+      frame_hold_pending_ = true;
+    }
+    ++glide_swap_interval_policy_.paced_swaps;
+    return;
   }
   if (swap_pacing_deadline_ > now) {
     constexpr auto kSpinMargin = std::chrono::microseconds(300);

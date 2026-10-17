@@ -40,7 +40,7 @@ self.onmessage = async (event) => {
   }
   // Design decision 9: the page names the mount (rom_selection.js mountBlobs):
   // the ZIPs at the top, the game's first, and the CHD in `<game>/`.
-  const { canvas, game, blobs, audioPort, audioSampleRate, cacheKey } = message;
+  const { canvas, game, blobs, audioPort, audioSampleRate, cacheKey, env } = message;
   const started = performance.now();
   const module = await createRepiu({
     repiuCanvas: canvas,
@@ -50,6 +50,9 @@ self.onmessage = async (event) => {
     // no sound).
     repiuAudioPort: audioPort,
     repiuAudioSampleRate: audioSampleRate,
+    // Issue #87: the engine's REPIU_* variables the page's address named
+    // (diagnosis; node_pre.js puts them in ENV).
+    repiuEnv: env || {},
     print: (text) => post("log", text),
     printErr: (text) => post("log", text),
     onAbort: (reason) => post("status", `Aborted: ${reason}`),

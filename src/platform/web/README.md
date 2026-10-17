@@ -55,6 +55,15 @@ F11, F12를 뺀 모든 키의 브라우저 기본 동작을 막으므로 F5가 �
 `src/input/browser_key_codes.cpp`, 다리는 `src/engine/input/browser_input_bridge.cpp`입니다
 ([설계 #76](../../../docs/design/20261016-i076-browser-input.md)).
 
+### 60fps 상한과 진단 변수 (issue #87)
+
+브라우저 창은 스왑 대기를 호스트 루프에 맡기고(`DefersSwapWait`), 백엔드는 네이티브 페이서와 같은 규칙으로 16,667 us마다
+기한을 정합니다. 단일 스레드 루프가 그 기한까지 `WaitInHostEventLoop`(타이머 뒤 MessageChannel 라운드)로 페이지의 이벤트
+고리에서 기다리므로, 화면 교체는 초당 60을 넘지 않습니다. 끝 보고 `[repiu-host-loop]`의 `frame-holds=횟수/ms`가 기다린
+양입니다. 페이지 주소의 `REPIU_*` 매개변수는 엔진 환경 변수가 됩니다(예: `index.html?REPIU_GLIDE_FRAME_RATE_LOG=1`은 초당
+`[repiu-frame-rate]` 줄)
+([설계 #87](../../../docs/design/20261017-i087-browser-frame-cap.md)).
+
 ## 여기 없는 것 — `host_environment`, `worker_signal`, `host_trace_descriptor`
 
 이들은 웹 사본을 만들지 않고 `src/platform/linux/`의 것을 **그대로 씁니다**(`host_trace_descriptor`는
@@ -146,6 +155,15 @@ OSD on Tab, and the rest) and the pad bindings apply as they are. While the game
 combinations, F11 and F12 has its browser default stopped, so F5 does not reload. The name table is
 `src/input/browser_key_codes.cpp` and the bridge `src/engine/input/browser_input_bridge.cpp`
 ([design #76](../../../docs/design/20261016-i076-browser-input.md)).
+
+### The 60 fps cap and diagnostic variables (issue #87)
+
+The browser window leaves the swap wait to the host loop (`DefersSwapWait`), and the backend sets a deadline every
+16,667 us by the native pacer's rules. The single-threaded loop waits for it in the page's event loop through
+`WaitInHostEventLoop` (a timer, then MessageChannel rounds), so the swaps never exceed 60 a second; `frame-holds=count/ms`
+in the closing `[repiu-host-loop]` line is how much it waited. `REPIU_*` parameters in the page's address become the
+engine's environment variables (`index.html?REPIU_GLIDE_FRAME_RATE_LOG=1`, for one, prints a `[repiu-frame-rate]` line
+a second) ([design #87](../../../docs/design/20261017-i087-browser-frame-cap.md)).
 
 ## What is not here — `host_environment`, `worker_signal`, `host_trace_descriptor`
 

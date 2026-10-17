@@ -248,6 +248,18 @@ async function startSound() {
   }
 }
 
+// Issue #87: REPIU_* parameters in the page's address go to the engine as
+// environment variables, for diagnosis (index.html?REPIU_GLIDE_FRAME_RATE_LOG=1).
+function engineVariables() {
+  const variables = {};
+  for (const [name, value] of new URLSearchParams(location.search)) {
+    if (/^REPIU_[A-Z0-9_]+$/.test(name)) {
+      variables[name] = value;
+    }
+  }
+  return variables;
+}
+
 start.addEventListener("click", async () => {
   const chosen = selected();
   if (chosen === null) {
@@ -310,6 +322,7 @@ start.addEventListener("click", async () => {
       audioPort: sound !== null ? sound.port : null,
       audioSampleRate: sound !== null ? sound.sampleRate : 0,
       cacheKey: MountCache.keyOf(chosen.chd),
+      env: engineVariables(),
     },
     transfer);
   // The focus leaves the Start button, which a key would otherwise press.

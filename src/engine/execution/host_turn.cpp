@@ -750,9 +750,41 @@ void OneThreadHostLoop::YieldToPageIfDue(const ThreadContext& context)
     }
 }
 
+// Issue #87 (design 20261017-i087): a swap the backend paced is held here,
+// with rex86 off the stack, until its deadline -- in the page's event loop,
+// so the wait is also the frame's yield to the page. True when it waited.
+bool OneThreadHostLoop::HoldFrameIfDue(ThreadContext* const context)
+{
+    std::chrono::steady_clock::time_point until;
+    if (!context->glide_backend.TakeFrameHold(&until))
+    {
+        return false;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (until <= now)
+    {
+        return false;
+    }
+    const auto wait = std::chrono::duration_cast<std::chrono::microseconds>(until - now);
+    if (!repiu::platform::WaitInHostEventLoop(static_cast<std::uint32_t>(wait.count())))
+    {
+        return false;
+    }
+    ++frame_holds_;
+    frame_hold_microseconds_ += static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - now)
+            .count());
+    ++page_yields_;
+    frames_at_page_yield_ = context->glide_backend.presented_frame_total();
+    last_page_yield_ = std::chrono::steady_clock::now();
+    return true;
+}
+
 bool OneThreadHostLoop::TurnDue(const ThreadContext& context) const
 {
     return context.host_turn_requested ||
+        context.glide_backend.frame_hold_pending() ||
         std::chrono::steady_clock::now() >= next_turn_;
 }
 
@@ -777,7 +809,10 @@ bool OneThreadHostLoop::TakeTurn(ThreadContext* const context)
     {
         return false;
     }
-    YieldToPageIfDue(*context);
+    if (!HoldFrameIfDue(context))
+    {
+        YieldToPageIfDue(*context);
+    }
     // The next turn comes with the next tick, or at the cap if that is later.
     const std::chrono::nanoseconds until_tick(
         static_cast<std::chrono::nanoseconds::rep>(std::min<std::uint64_t>(
@@ -809,10 +844,12 @@ HostPollOutcome RunGuestOnThisThread(const repiu::platform::HostThreadEntry entr
     context->one_thread_host = nullptr;
     std::fprintf(stderr,
                  "[repiu-host-loop] one thread: turns=%llu yields=%llu "
-                 "page-yields=%llu end=%s\n",
+                 "page-yields=%llu frame-holds=%llu/%llums end=%s\n",
                  static_cast<unsigned long long>(loop.turns()),
                  static_cast<unsigned long long>(loop.yields()),
                  static_cast<unsigned long long>(loop.page_yields()),
+                 static_cast<unsigned long long>(loop.frame_holds()),
+                 static_cast<unsigned long long>(loop.frame_hold_microseconds() / 1000U),
                  loop.outcome().has_value() ? "host" : "guest");
     if (loop.outcome().has_value())
     {

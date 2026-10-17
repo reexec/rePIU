@@ -6,7 +6,7 @@
 // the engine hand the thread back to this Worker's event loop once a frame.
 "use strict";
 
-importScripts("repiu_browser.js");
+importScripts("repiu_browser.js", "mount_cache.js");
 
 // Issue #76: the page's keys and gamepads, oldest first, until the engine
 // takes them (Module.repiuInput, read by src/platform/web/browser_host.cpp).
@@ -40,7 +40,7 @@ self.onmessage = async (event) => {
   }
   // Design decision 9: the page names the mount (rom_selection.js mountBlobs):
   // the ZIPs at the top, the game's first, and the CHD in `<game>/`.
-  const { canvas, game, blobs, audioPort, audioSampleRate } = message;
+  const { canvas, game, blobs, audioPort, audioSampleRate, cacheKey } = message;
   const started = performance.now();
   const module = await createRepiu({
     repiuCanvas: canvas,
@@ -57,10 +57,44 @@ self.onmessage = async (event) => {
   const FS = module.FS;
   FS.mkdir("/roms");
   FS.mount(FS.filesystems.WORKERFS, { blobs }, "/roms");
+  // Issue #86: the files the loader unpacks from the CHD. When the browser's
+  // storage holds them from an earlier run of the same CHD, they are mounted
+  // read-only where the loader looks, and it skips the unpack (the game never
+  // writes there).
+  const mountPath = `/build/runtime_mounts/${game}`;
+  let cached = null;
+  try {
+    cached = cacheKey ? await MountCache.blobsFor(game, cacheKey) : null;
+  } catch (error) {
+    post("cache", `Cache unreadable: ${error}`);
+  }
+  if (cached !== null) {
+    FS.mkdirTree(mountPath);
+    FS.mount(FS.filesystems.WORKERFS, { blobs: cached }, mountPath);
+    post("cache", `Using the unpacked files saved earlier (${cached.length} files)`);
+  }
   post("status", `${game} running (loaded in ${((performance.now() - started) / 1000).toFixed(1)} s)`);
   try {
     module.callMain([game]);
   } catch (error) {
     post("status", `Stopped: ${error}`);
+  }
+  // callMain returns at the engine's first yield, after the unpack. The copy
+  // runs between the engine's turns.
+  if (cached === null && cacheKey && MountCache.supported()) {
+    let lastPercent = -1;
+    post("cache", "Saving the unpacked files for later runs...");
+    MountCache.store(game, cacheKey, FS, mountPath, (done, total) => {
+      const percent = total > 0 ? Math.floor((done * 100) / total) : 100;
+      if (percent !== lastPercent) {
+        lastPercent = percent;
+        post("cache", `Saving the unpacked files for later runs: ${percent}%`);
+      }
+    }).then((manifest) => {
+      post("cache", `Saved ${manifest.files} unpacked files (${Math.round(manifest.bytes / 1048576)} MB); ` +
+        "later runs skip the unpack");
+    }, (error) => {
+      post("cache", `Unpacked files not saved: ${error.message || error}`);
+    });
   }
 };

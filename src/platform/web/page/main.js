@@ -21,6 +21,8 @@ const copyButton = document.getElementById("copy");
 const activity = document.getElementById("activity");
 const canvas = document.getElementById("screen");
 const soundLine = document.getElementById("sound");
+const cacheLine = document.getElementById("cache");
+const clearCache = document.getElementById("clear-cache");
 
 const kLogLines = 400;
 const kHistoryLines = 50000;
@@ -130,11 +132,40 @@ function showCandidates(found, problem) {
   } else {
     showStatus(describe(found[0]), false);
   }
+  showCache();
 }
 
 function selected() {
   return candidates[gameSelect.hidden ? 0 : Number(gameSelect.value)] || null;
 }
+
+// Issue #86: whether the chosen game's unpacked files are saved, and from
+// which CHD.
+async function showCache() {
+  const chosen = selected();
+  clearCache.hidden = true;
+  if (!chosen || !MountCache.supported()) {
+    cacheLine.textContent = "";
+    return;
+  }
+  const manifest = await MountCache.state(chosen.game);
+  if (manifest === null) {
+    cacheLine.textContent = "Unpacked files: not saved yet (the first start unpacks the CHD, then saves them)";
+  } else {
+    const same = MountCache.sameKey(manifest.key, MountCache.keyOf(chosen.chd));
+    cacheLine.textContent = `Unpacked files: saved, ${Math.round(manifest.bytes / 1048576)} MB` +
+      (same ? ", so the start skips the unpack" : ` from another CHD (${manifest.key.chdName}), not used`);
+    clearCache.hidden = false;
+  }
+}
+
+clearCache.addEventListener("click", async () => {
+  const chosen = selected();
+  if (chosen) {
+    await MountCache.clear(chosen.game);
+    await showCache();
+  }
+});
 
 folderInput.addEventListener("change", () => {
   // The other way is cleared, so what starts is never a mix of the two.
@@ -162,6 +193,7 @@ gameSelect.addEventListener("change", () => {
   if (chosen) {
     showStatus(describe(chosen), false);
   }
+  showCache();
 });
 
 // Issue #81: the sound. The AudioContext is made inside the Start click, as a
@@ -223,6 +255,12 @@ start.addEventListener("click", async () => {
   }
   // Before anything awaits, so the AudioContext is made inside the gesture.
   const soundStarting = startSound();
+  // Issue #86: ask that the saved unpacked files are not evicted. The answer
+  // does not change anything else.
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().catch(() => {});
+  }
+  clearCache.hidden = true;
   for (const control of [start, folderInput, zipInput, chdInput, gameSelect]) {
     control.disabled = true;
   }
@@ -236,6 +274,8 @@ start.addEventListener("click", async () => {
     const message = event.data;
     if (message.type === "log") {
       appendLog(message.text);
+    } else if (message.type === "cache") {
+      cacheLine.textContent = message.text;
     } else if (message.type === "status") {
       const finished = /^(Stopped|Aborted)/.test(message.text);
       if (finished) {
@@ -269,6 +309,7 @@ start.addEventListener("click", async () => {
       blobs: RomSelection.mountBlobs(chosen),
       audioPort: sound !== null ? sound.port : null,
       audioSampleRate: sound !== null ? sound.sampleRate : 0,
+      cacheKey: MountCache.keyOf(chosen.chd),
     },
     transfer);
   // The focus leaves the Start button, which a key would otherwise press.

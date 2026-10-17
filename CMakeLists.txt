@@ -1315,6 +1315,7 @@ if(EMSCRIPTEN)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/page_input.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/worker.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/audio_worklet.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/mount_cache.js"
     )
     add_custom_command(TARGET repiu_browser POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${repiu_browser_page}

@@ -31,6 +31,12 @@ BrowserGlFunction BrowserGlProcAddress(const char* name);
 // back. Does nothing unless the page asked for yields; true when it yielded.
 bool YieldToHostEventLoop();
 
+// Issue #87. Like YieldToHostEventLoop, but returns only once `microseconds`
+// have passed, the page's event loop running meanwhile (a timer, then rounds
+// for the last part). Does nothing unless the page asked for yields; true
+// when it waited.
+bool WaitInHostEventLoop(std::uint32_t microseconds);
+
 // Issue #76. One input the page forwarded to this Worker: a key, the page
 // losing focus, or a gamepad's state. See
 // docs/design/20261016-i076-browser-input.md.

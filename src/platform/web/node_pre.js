@@ -22,5 +22,10 @@ if (typeof window === "undefined") {
     if (!named("SDL_AUDIO_DRIVER")) {
       ENV.SDL_AUDIO_DRIVER = "none";
     }
+    // Issue #87: the variables the page's worker.js passed on.
+    const passed = Module.repiuEnv || {};
+    for (const name of Object.keys(passed)) {
+      ENV[name] = String(passed[name]);
+    }
   });
 }

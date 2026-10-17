@@ -497,6 +497,7 @@ target_sources(repiu_exe
         src/engine/host_audio_stream.cpp
         src/engine/browser_audio_mixer.cpp
         src/engine/glide_osd.cpp
+        src/engine/frame_rate_history.cpp
         src/engine/imgui_ui_scale.cpp
         src/engine/glide_post_process.cpp
         src/engine/glide_letterbox.cpp
@@ -900,6 +901,7 @@ endif()
 # on every host so the same assertions can be compared across them.
 add_executable(repiu_core_probe
     src/tools/core_probe/main.cpp
+    src/tools/aot_probe/frame_rate_history_probe.cpp
     src/tools/aot_probe/shutdown_recovery_policy_probe.cpp
     src/tools/aot_probe/pic_timer_in_service_probe.cpp
     src/tools/aot_probe/timer_return_pad_probe.cpp
@@ -1315,6 +1317,7 @@ if(EMSCRIPTEN)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/page_input.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/worker.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/audio_worklet.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/web/page/mount_cache.js"
     )
     add_custom_command(TARGET repiu_browser POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${repiu_browser_page}

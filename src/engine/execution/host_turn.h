@@ -94,8 +94,21 @@ public:
         return page_yields_;
     }
 
+    // Issue #87: how many frames were held to their pacing deadline, and for
+    // how long in all (none outside a browser).
+    [[nodiscard]] std::uint64_t frame_holds() const
+    {
+        return frame_holds_;
+    }
+
+    [[nodiscard]] std::uint64_t frame_hold_microseconds() const
+    {
+        return frame_hold_microseconds_;
+    }
+
 private:
     void YieldToPageIfDue(const ThreadContext& context);
+    [[nodiscard]] bool HoldFrameIfDue(ThreadContext* context);
 
     HostTurn* turn_;
     std::chrono::steady_clock::time_point next_turn_;
@@ -105,6 +118,8 @@ private:
     std::chrono::steady_clock::time_point last_page_yield_;
     std::uint64_t frames_at_page_yield_ = 0U;
     std::uint64_t page_yields_ = 0U;
+    std::uint64_t frame_holds_ = 0U;
+    std::uint64_t frame_hold_microseconds_ = 0U;
 };
 
 // Issue #64. Runs the guest on this thread through `entry` (the guest thread

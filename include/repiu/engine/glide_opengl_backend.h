@@ -152,6 +152,13 @@ public:
     // runs the teardown block that reads them. That is why no lock is involved,
     // and why a caller on any other thread would need one.
     std::uint64_t presented_frame_total() const;
+    // Issue #87: when the window defers the swap wait, the time the last
+    // swap's frame is held until. True once per swap that has to be held;
+    // the host loop then waits until `until`. Host thread only.
+    bool TakeFrameHold(std::chrono::steady_clock::time_point* until);
+    bool frame_hold_pending() const {
+      return frame_hold_pending_;
+    }
     std::uint64_t presented_frame_span_milliseconds() const;
     // Task 420: the remaining Glide draw entry points. A point is one vertex
     // with `GL_POINTS`; a polygon is a convex fan, which is what Glide's
@@ -683,6 +690,11 @@ private:
     std::chrono::steady_clock::duration swap_pacing_period_{};
     std::chrono::steady_clock::time_point swap_pacing_deadline_{};
     bool swap_pacing_deadline_valid_ = false;
+    // Issue #87: the pacing deadline is waited for by the host loop instead
+    // of in the present.
+    bool swap_wait_deferred_ = false;
+    bool frame_hold_pending_ = false;
+    std::chrono::steady_clock::time_point frame_hold_until_{};
     // Task 748: when the previous swap returned to the guest and when its
     // present ended, so a long frame can be split into sleep, guest and
     // present time.

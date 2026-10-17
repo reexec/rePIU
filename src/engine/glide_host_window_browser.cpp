@@ -110,6 +110,13 @@ public:
         return 0.0;
     }
 
+    // Issue #87: the commit to the page does not wait for a vblank, and the
+    // Worker must not sleep, so the host loop waits in the page's event loop.
+    bool DefersSwapWait() const override
+    {
+        return true;
+    }
+
     std::string VideoDriver() const override
     {
         return "browser";

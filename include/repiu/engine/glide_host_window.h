@@ -41,6 +41,14 @@ public:
     virtual bool SetSwapInterval(int interval) = 0;
     virtual bool SwapInterval(int* interval) const = 0;
     virtual double RefreshRateHz() const = 0;
+    // Issue #87: true when waiting out the swap interval is left to the host
+    // loop rather than done in the present -- a browser canvas, whose
+    // commit does not wait, on a thread that must not sleep. The backend then
+    // paces the swaps with deadlines the loop waits for (TakeFrameHold).
+    virtual bool DefersSwapWait() const
+    {
+        return false;
+    }
     virtual std::string VideoDriver() const = 0;
 
     // SDL's window id, for the event filters and the input script; 0 when

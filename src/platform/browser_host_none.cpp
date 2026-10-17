@@ -35,6 +35,11 @@ bool YieldToHostEventLoop()
     return false;
 }
 
+bool WaitInHostEventLoop(std::uint32_t)
+{
+    return false;
+}
+
 int BrowserAudioSampleRate()
 {
     return 0;

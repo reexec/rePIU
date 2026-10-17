@@ -9,7 +9,9 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <cfloat>
+#include <cstdio>
 #include <string>
 
 namespace repiu::engine
@@ -143,6 +145,114 @@ void DrawRendererSection(const GlRendererIdentity& identity)
                         identity.wsl_d3d12 ? " (Mesa D3D12 for WSL)" : "");
 }
 
+// Issue #88: the current rate and the last 60 seconds as a graph, with the
+// low, mean and high under it. The graph is drawn by hand rather than with
+// PlotLines so it carries a 60 fps reference line, grid lines, and their
+// values outside it: the rate on the left, the seconds underneath.
+void DrawFrameRateSection(const FrameRateHistory& history)
+{
+    float values[FrameRateHistory::kSlots] = {};
+    const std::size_t count = history.CopyOldestFirst(values);
+    if (count == 0U)
+    {
+        ImGui::TextUnformatted("FPS --");
+        ImGui::TextDisabled("measuring");
+        return;
+    }
+    ImGui::Text("FPS %.1f", history.latest());
+
+    constexpr float kReference = 60.0F;
+    // The grid step grows with the scale so the values stay legible.
+    const float top_value = std::max(75.0F, history.maximum() * 1.1F);
+    const float step = top_value > 200.0F ? 60.0F : 30.0F;
+    const float font = ImGui::GetFontSize();
+    const ImVec2 size(font * 14.0F, font * 4.0F);
+    const float label_width = ImGui::CalcTextSize("000").x + font * 0.3F;
+
+    ImDrawList* const draw = ImGui::GetWindowDrawList();
+    const ImVec2 cursor = ImGui::GetCursorScreenPos();
+    const ImVec2 origin(cursor.x + label_width, cursor.y + font * 0.5F);
+    const ImVec2 corner(origin.x + size.x, origin.y + size.y);
+    const auto y_of = [&](float value) {
+        const float clamped = std::clamp(value, 0.0F, top_value);
+        return corner.y - clamped / top_value * size.y;
+    };
+    const auto x_of = [&](std::size_t slot) {
+        // Slot 0 is 60 seconds ago, the last slot now.
+        return origin.x + size.x * static_cast<float>(slot) /
+            static_cast<float>(FrameRateHistory::kSlots - 1U);
+    };
+    const ImU32 frame_colour = ImGui::GetColorU32(ImGuiCol_FrameBg);
+    const ImU32 grid_colour = ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.35F);
+    const ImU32 label_colour = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    const ImU32 reference_colour = IM_COL32(90, 220, 120, 230);
+    const ImU32 line_colour = ImGui::GetColorU32(ImGuiCol_PlotLines);
+
+    draw->AddRectFilled(origin, corner, frame_colour);
+    // Grid lines and the rate scale on the left.
+    for (float value = 0.0F; value <= top_value; value += step)
+    {
+        const float y = y_of(value);
+        if (value != kReference)
+        {
+            draw->AddLine(ImVec2(origin.x, y), ImVec2(corner.x, y), grid_colour);
+        }
+        char text[8];
+        std::snprintf(text, sizeof(text), "%.0f", value);
+        const ImVec2 text_size = ImGui::CalcTextSize(text);
+        draw->AddText(ImVec2(origin.x - text_size.x - font * 0.3F, y - text_size.y * 0.5F),
+                      value == kReference ? reference_colour : label_colour, text);
+    }
+    // Ten-second ticks along the bottom, and their labels under it.
+    for (int seconds = 60; seconds >= 0; seconds -= 10)
+    {
+        const std::size_t slot = FrameRateHistory::kSlots - 1U -
+            std::min<std::size_t>(static_cast<std::size_t>(seconds),
+                                  FrameRateHistory::kSlots - 1U);
+        const float x = seconds == 60 ? origin.x : x_of(slot);
+        draw->AddLine(ImVec2(x, origin.y), ImVec2(x, corner.y), grid_colour);
+        if (seconds % 20 == 0)
+        {
+            char text[8];
+            if (seconds == 0)
+            {
+                std::snprintf(text, sizeof(text), "now");
+            }
+            else
+            {
+                std::snprintf(text, sizeof(text), "-%ds", seconds);
+            }
+            const ImVec2 text_size = ImGui::CalcTextSize(text);
+            // Kept inside the graph's width so the first clears the rate
+            // scale's 0.
+            const float left = std::clamp(x - text_size.x * 0.5F, origin.x,
+                                          corner.x - text_size.x);
+            draw->AddText(ImVec2(left, corner.y + font * 0.25F), label_colour, text);
+        }
+    }
+    // The 60 fps reference line, over the grid.
+    const float reference_y = y_of(kReference);
+    draw->AddLine(ImVec2(origin.x, reference_y), ImVec2(corner.x, reference_y),
+                  reference_colour, 1.5F);
+    // The rate, newest at the right edge.
+    const std::size_t first_slot = FrameRateHistory::kSlots - count;
+    if (count == 1U)
+    {
+        draw->AddCircleFilled(ImVec2(x_of(first_slot), y_of(values[0])), 2.0F, line_colour);
+    }
+    for (std::size_t i = 1U; i < count; ++i)
+    {
+        draw->AddLine(ImVec2(x_of(first_slot + i - 1U), y_of(values[i - 1U])),
+                      ImVec2(x_of(first_slot + i), y_of(values[i])), line_colour, 1.5F);
+    }
+    draw->AddRect(origin, corner, grid_colour);
+    // Room for the graph, its scale and the seconds under it.
+    ImGui::Dummy(ImVec2(label_width + size.x, size.y + font * 1.8F));
+    ImGui::TextDisabled("FPS, last %us: low %.1f  mean %.1f  high %.1f",
+                        static_cast<unsigned>(count), history.minimum(),
+                        history.mean(), history.maximum());
+}
+
 // Task 768: the shader list, Reload, and the active shader's parameters.
 void DrawPostProcessMenu(GlidePostProcess* post_process)
 {
@@ -250,6 +360,17 @@ void GlideOsd::Render(std::atomic<bool>* lfb_high_precision,
                          ImGuiWindowFlags_NoResize |
                          ImGuiWindowFlags_NoSavedSettings))
     {
+        // Issue #88: the frame rate takes the right of the opening rows,
+        // the name and the renderer the rest.
+        const bool split = ImGui::BeginTable(
+            "##top", 2, ImGuiTableFlags_SizingFixedFit);
+        if (split)
+        {
+            ImGui::TableSetupColumn("##info", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("##fps", ImGuiTableColumnFlags_WidthFixed);
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+        }
         for (const std::string& line : info_lines_)
         {
             ImGui::TextUnformatted(line.c_str());
@@ -257,6 +378,15 @@ void GlideOsd::Render(std::atomic<bool>* lfb_high_precision,
         if (has_renderer_identity_)
         {
             DrawRendererSection(renderer_identity_);
+        }
+        if (split)
+        {
+            ImGui::TableSetColumnIndex(1);
+            DrawFrameRateSection(frame_rates_);
+            ImGui::EndTable();
+        }
+        if (has_renderer_identity_)
+        {
             ImGui::Separator();
         }
         // Issue #45: unlike the items below, these two are stored in

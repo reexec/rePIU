@@ -1137,6 +1137,11 @@ void GlideOpenGlBackend::RecordPresentedFrame() {
 
   const double frames_per_second =
       static_cast<double>(frame_rate_frame_count_ - 1) / elapsed_seconds;
+  // Issue #88: the OSD's graph, kept while the overlay is closed too.
+  if (osd_ != nullptr) {
+    osd_->RecordFrameRate(static_cast<float>(frames_per_second),
+                          elapsed_seconds);
+  }
   // Task 509: the same value the title carries, on the log, when asked for.
   //
   // One average over a run cannot tell "uniformly slow" from "collapses

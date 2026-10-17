@@ -14,9 +14,12 @@ FPS는 지금 창 제목(Task 509)과 `REPIU_GLIDE_FRAME_RATE_LOG` 로그에만 
 2. **기록은 1초 칸 60개.** 새 순수 클래스 `FrameRateHistory`(엔진). 한 번의 측정이 여러 초에 걸치면(로딩 중 화면 교체가
    없던 동안) 그 초 수만큼 같은 값을 채워, 그래프의 가로축이 늘 실제 60초입니다. 화면 교체가 하나도 없으면 측정이 없으므로,
    기록은 다음 교체 때 채워집니다.
-3. **그리기는 별도의 작은 창, 오른쪽 위.** 기존 OSD 창(전체 폭, 위쪽)의 오른쪽 끝에 겹쳐 그립니다. 내용: `FPS 60.0`과
-   `ImGui::PlotLines` 그래프(세로 0~max(65, 최근 최대)), 그 아래 최근 60초의 최소·평균·최대. 입력·초점·패드 탐색을 받지
-   않습니다(`NoInputs`, `NoNav`, `NoFocusOnAppearing`), 그래서 기존 OSD 조작이 바뀌지 않습니다. 크기는 #15의 배율을 따릅니다.
+3. **그리기는 OSD의 오른쪽 위.** 기존 OSD 창(전체 폭, 위쪽)의 첫 부분을 두 칸 표로 나눠 왼쪽에 이름·렌더러, 오른쪽에 FPS를
+   둡니다(따로 창을 띄우면 초점을 받는 OSD 창 뒤로 가려지므로). 내용: `FPS 60.0`과
+   손으로 그린 그래프(세로 0~max(75, 최근 최대×1.1)), 그 아래 최근 60초의 최소·평균·최대. 그래프에는 60fps 기준선(초록),
+   30fps 간격 가로 눈금선과 10초 간격 세로 눈금선을 긋고, 바깥 왼쪽에 FPS 눈금 값(60은 초록), 아래에 시간 눈금
+   (`-60s`, `-40s`, `-20s`, `now`)을 씁니다(사용자 요청, 2026-10-17). `PlotLines`는 기준선과 눈금을 그리지 못해 쓰지 않습니다. 그림과 글뿐이라 패드 탐색
+   대상이 아니고, 기존 OSD 조작이 바뀌지 않습니다. 크기는 #15의 배율을 따릅니다.
 4. 네이티브와 브라우저가 같은 코드입니다.
 
 ## 검증
@@ -45,10 +48,14 @@ be readable on the game screen.
 2. **The record is 60 one-second slots,** in a new pure engine class `FrameRateHistory`. A measurement spanning several
    seconds (a load with no swaps) fills that many slots with its value, so the graph's horizontal axis is always a real
    60 seconds. With no swap at all there is no measurement, and the slots are filled at the next swap.
-3. **It is drawn in its own small window at the top right,** over the right end of the existing OSD window (full width,
-   at the top): `FPS 60.0`, an `ImGui::PlotLines` graph (vertically 0 to max(65, the recent maximum)), and below it the
-   minimum, mean and maximum of the last 60 seconds. It takes no input, focus or pad navigation (`NoInputs`, `NoNav`,
-   `NoFocusOnAppearing`), so the existing OSD controls do not change. Its size follows #15's scale.
+3. **It is drawn at the OSD's top right.** The opening rows of the existing OSD window (full width, at the top) become a
+   two-column table, the name and renderer on the left and the rate on the right (a window of its own would sit behind the
+   focused OSD window): `FPS 60.0`, a hand-drawn graph (vertically 0 to max(75, 1.1 × the recent maximum)), and below it the
+   minimum, mean and maximum of the last 60 seconds. The graph has a 60 fps reference line (green), horizontal grid lines
+   every 30 fps and vertical ones every 10 seconds, with the rate scale outside it on the left (60 in green) and the time
+   scale under it (`-60s`, `-40s`, `-20s`, `now`) (the user's request, 2026-10-17). `PlotLines` cannot draw the reference
+   line or the scales, so it is not used. Being drawing and text only, it is not a pad
+   navigation target, and the existing OSD controls do not change. Its size follows #15's scale.
 4. Native builds and the browser share the code.
 
 ## Verification

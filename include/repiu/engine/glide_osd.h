@@ -1,6 +1,7 @@
 #ifndef REPIU_ENGINE_GLIDE_OSD_H_
 #define REPIU_ENGINE_GLIDE_OSD_H_
 
+#include "repiu/engine/frame_rate_history.h"
 #include "repiu/engine/gl_renderer_identity.h"
 
 #include <atomic>
@@ -105,6 +106,14 @@ public:
     // build date, then the target profile.
     void SetInfoLines(const std::vector<std::string>& lines);
 
+    // Issue #88. The backend's one-second frame rate measurement, taken over
+    // `seconds`; recorded while the overlay is closed too, for the graph at
+    // its top right.
+    void RecordFrameRate(float frames_per_second, double seconds)
+    {
+        frame_rates_.Record(frames_per_second, seconds);
+    }
+
 private:
     bool initialized_ = false;
     bool windowless_ = false;
@@ -118,6 +127,7 @@ private:
     bool has_renderer_identity_ = false;
     GlRendererIdentity renderer_identity_;
     std::vector<std::string> info_lines_;
+    FrameRateHistory frame_rates_;
     // #15. The style as first set up, which every scale starts again from,
     // and the scale last applied.
     std::unique_ptr<ImGuiStyle> base_style_;

@@ -21,12 +21,16 @@
 아래에 `-60s`·`-40s`·`-20s`·`now`. 세로 위끝은 max(75, 최근 최대×1.1), 200을 넘으면 눈금이 60 간격.
 첫 그림에서 왼쪽 아래 `0`과 `-60s`가 겹쳐, 시간 글자를 그래프 폭 안에 두었습니다.
 
+사용자 요청으로 FPS 상자를 오른쪽 정렬했습니다. 열 폭은 요약 줄이 가장 길 때(`low 000.0 mean 000.0 high 000.0`)로 고정해
+숫자가 바뀌어도 흔들리지 않고, 값·그래프·요약이 모두 오른쪽 끝에 맞습니다.
+
 ### 확인
 
 | 대상 | 결과 |
 |---|---|
 | Win32 Release, pumpitea, Tab 20초 | 80초 캡처에 그래프. `FPS 60.0`, `low 41.5 mean 59.6 high 61.4`, 순간 하락이 보임 |
 | 브라우저(headless Chrome), Tab 70초 | 140초 캡처에 그래프. `FPS 60.1`, 로딩 구간의 하락과 60 기준선 아래의 곡선(#87 상한) |
+| Win32 Release, 오른쪽 정렬 뒤 | 22초 캡처에서 `FPS 60.0`, 그래프, 요약이 오른쪽 끝에 맞음 |
 | core probe | Win32 Release·Debug·`emulated`, Linux x64·i386, Node 모두 통과(`frame_rate_history_all=true`) |
 
 ### 따로 본 것
@@ -66,12 +70,17 @@ vertical ones every 10 seconds, the rate on the left outside (60 in green), and 
 The top is max(75, 1.1 × the recent maximum), with grid lines every 60 above 200. In the first picture the `0` and the
 `-60s` at the bottom left overlapped, so the time labels are kept within the graph's width.
 
+At the user's request the FPS box is right-aligned. The column's width is fixed at the summary line's widest
+(`low 000.0 mean 000.0 high 000.0`), so it does not shift as the numbers change, and the value, graph and summary all end
+at the right edge.
+
 ### Checks
 
 | Target | Result |
 |---|---|
 | Win32 Release, pumpitea, Tab at 20 s | The graph in the 80 s capture: `FPS 60.0`, `low 41.5 mean 59.6 high 61.4`, brief dips visible |
 | Browser (headless Chrome), Tab at 70 s | The graph in the 140 s capture: `FPS 60.1`, the dip during a load and the curve under the 60 line (#87's cap) |
+| Win32 Release, after right-aligning | In the 22 s capture `FPS 60.0`, the graph and the summary end at the right edge |
 | Core probe | Win32 Release, Debug and `emulated`, Linux x64 and i386, Node all pass (`frame_rate_history_all=true`) |
 
 ### Seen on the side

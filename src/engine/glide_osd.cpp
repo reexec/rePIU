@@ -145,6 +145,47 @@ void DrawRendererSection(const GlRendererIdentity& identity)
                         identity.wsl_d3d12 ? " (Mesa D3D12 for WSL)" : "");
 }
 
+// Issue #88: the frame rate section is right-aligned in a column of fixed
+// width -- the widest its summary line can be -- so the column does not jump
+// as the numbers change.
+constexpr const char* kFrameRateWidestSummary =
+    "FPS, last 60s: low 000.0  mean 000.0  high 000.0";
+
+float FrameRateGraphWidth()
+{
+    const float font = ImGui::GetFontSize();
+    return ImGui::CalcTextSize("000").x + font * 0.3F + font * 14.0F;
+}
+
+float FrameRateSectionWidth()
+{
+    return std::max(FrameRateGraphWidth(),
+                    ImGui::CalcTextSize(kFrameRateWidestSummary).x);
+}
+
+// Moves the cursor so an item `width` wide ends at the column's right edge.
+void AlignRight(float width)
+{
+    const float spare = ImGui::GetContentRegionAvail().x - width;
+    if (spare > 0.0F)
+    {
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + spare);
+    }
+}
+
+void TextRight(const char* text, bool disabled)
+{
+    AlignRight(ImGui::CalcTextSize(text).x);
+    if (disabled)
+    {
+        ImGui::TextDisabled("%s", text);
+    }
+    else
+    {
+        ImGui::TextUnformatted(text);
+    }
+}
+
 // Issue #88: the current rate and the last 60 seconds as a graph, with the
 // low, mean and high under it. The graph is drawn by hand rather than with
 // PlotLines so it carries a 60 fps reference line, grid lines, and their
@@ -155,11 +196,13 @@ void DrawFrameRateSection(const FrameRateHistory& history)
     const std::size_t count = history.CopyOldestFirst(values);
     if (count == 0U)
     {
-        ImGui::TextUnformatted("FPS --");
-        ImGui::TextDisabled("measuring");
+        TextRight("FPS --", false);
+        TextRight("measuring", true);
         return;
     }
-    ImGui::Text("FPS %.1f", history.latest());
+    char line[96];
+    std::snprintf(line, sizeof(line), "FPS %.1f", history.latest());
+    TextRight(line, false);
 
     constexpr float kReference = 60.0F;
     // The grid step grows with the scale so the values stay legible.
@@ -170,6 +213,7 @@ void DrawFrameRateSection(const FrameRateHistory& history)
     const float label_width = ImGui::CalcTextSize("000").x + font * 0.3F;
 
     ImDrawList* const draw = ImGui::GetWindowDrawList();
+    AlignRight(FrameRateGraphWidth());
     const ImVec2 cursor = ImGui::GetCursorScreenPos();
     const ImVec2 origin(cursor.x + label_width, cursor.y + font * 0.5F);
     const ImVec2 corner(origin.x + size.x, origin.y + size.y);
@@ -248,9 +292,10 @@ void DrawFrameRateSection(const FrameRateHistory& history)
     draw->AddRect(origin, corner, grid_colour);
     // Room for the graph, its scale and the seconds under it.
     ImGui::Dummy(ImVec2(label_width + size.x, size.y + font * 1.8F));
-    ImGui::TextDisabled("FPS, last %us: low %.1f  mean %.1f  high %.1f",
-                        static_cast<unsigned>(count), history.minimum(),
-                        history.mean(), history.maximum());
+    std::snprintf(line, sizeof(line), "FPS, last %us: low %.1f  mean %.1f  high %.1f",
+                  static_cast<unsigned>(count), history.minimum(),
+                  history.mean(), history.maximum());
+    TextRight(line, true);
 }
 
 // Task 768: the shader list, Reload, and the active shader's parameters.
@@ -367,7 +412,8 @@ void GlideOsd::Render(std::atomic<bool>* lfb_high_precision,
         if (split)
         {
             ImGui::TableSetupColumn("##info", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("##fps", ImGuiTableColumnFlags_WidthFixed);
+            ImGui::TableSetupColumn("##fps", ImGuiTableColumnFlags_WidthFixed,
+                                    FrameRateSectionWidth());
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
         }

@@ -36,7 +36,8 @@ CommandLineOptions ParseCommandLineOptions(
             if (index + 1 >= arguments.size())
             {
                 options.error = "--post-shader needs a shader id "
-                                "(none, crt, scanline or a file in shaders/)";
+                                "(none, crt, scanline, fsr, scalefx, anime4k or a "
+                                ".glsl/.glslp file in shaders/)";
                 return options;
             }
             value = arguments[++index];

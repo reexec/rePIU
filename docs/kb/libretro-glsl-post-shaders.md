@@ -10,7 +10,8 @@
 libretro(RetroArch)의 GL 드라이버가 쓰는 shader 형식으로, 에뮬레이터 화면 후처리 자료가
 가장 많이 쌓인 형식입니다. 공식 설명은
 [libretro docs: GLSL shaders](https://docs.libretro.com/development/shader/glsl-shaders/)에
-있습니다. rePIU는 그중 **단일 pass `.glsl`** 부분집합을 읽습니다.
+있습니다. rePIU는 그중 **단일 pass `.glsl`** 부분집합과, issue #90부터 **다단계 preset `.glslp`**의
+부분집합(7절)을 읽습니다.
 
 ### 2. 한 파일, 두 단계
 
@@ -66,10 +67,28 @@ uniform float NAME;
 픽셀만큼 옮기는 것입니다. rePIU의 내장 `scanline`은 앞의 방법을, `crt`는 뒤의 방법을 씁니다
 (Task 768 로그에서 실제 GL로 확인).
 
-### 6. rePIU가 지원하지 않는 것
+### 6. 다단계 preset(`.glslp`)
 
-다단계 preset(`.glslp`), `PrevTexture`·`PassPrev` 같은 이전 프레임·이전 pass 입력, LUT 텍스처,
-Slang(`.slang`, Vulkan 계열) 형식.
+preset은 `key = value` 줄의 텍스트 파일로, `shaders`가 pass 수이고 pass i마다 `shaderi`(preset 기준 상대 경로),
+`scale_typei`(`source`·`viewport`·`absolute`, `_x`/`_y`로 축마다), `scalei`(`_x`/`_y`), `filter_lineari`,
+`float_framebufferi`를 둡니다. libretro의 규칙: 접미사 없는 키가 `_x`/`_y`보다 우선하고, 배율 방식 없는 `scalei`는
+무시되며, 따옴표 밖의 `#`은 주석입니다. 배율이 없는 마지막 pass는 창에 바로 그립니다. 각 pass는 앞 pass의 출력을
+`Texture`로, 원래 그림을 `OrigTexture`로, N개 앞 pass의 출력을 `PassPrevNTexture`로 읽고, 이름마다
+`...TextureSize`·`...InputSize`가 있습니다. rePIU는 issue #90부터 이 부분집합을 읽습니다
+([가이드](../guides/post-process-shaders.md)의 preset 절). 출처:
+[libretro docs: GLSL shaders](https://docs.libretro.com/development/shader/glsl-shaders/),
+[RetroArch `gfx/video_shader_parse.c`](https://github.com/libretro/RetroArch/blob/master/gfx/video_shader_parse.c).
+
+### 7. rePIU가 지원하지 않는 것
+
+`PrevTexture` 같은 이전 프레임 입력, LUT 텍스처, `srgb_framebuffer`·`wrap_mode`·`mipmap_input`·`alias`,
+Slang(`.slang`, Vulkan 계열) 형식, mpv 훅 형식(Anime4K 원본; 내장 `anime4k`는 손으로 변환한 pass 파일).
+
+libretro `glsl-shaders`의 많은 파일은 `#version 130`으로 시작해 `#if __VERSION__ >= 130`로 `in`/`out`/`texture`와
+자기 `out vec4 FragColor`를 고르는 `COMPAT_*` 매크로 형식입니다(내장 `scalefx`). rePIU의 변환기는 `#version` 줄을
+문맥의 머리말(3.30 core / 3.00 es)로 바꾸고, 본문이 `vec4` 출력을 스스로 선언하면 자기 출력을 더하지 않습니다(ES는
+위치 없는 출력 둘을 거부). 그래서 GLSL 1.20 스타일과 1.30 스타일이 모두 읽힙니다. ES에서는 정수→실수 암시 변환 같은
+1.30 허용 사항이 오류이므로, 그런 shader는 브라우저에서 컴파일 오류로 거부되고 네이티브에서만 돕니다.
 
 ## English
 
@@ -78,7 +97,8 @@ Slang(`.slang`, Vulkan 계열) 형식.
 The shader format of libretro's (RetroArch's) GL driver, the format with the largest body of emulator
 post-processing material. The official description is
 [libretro docs: GLSL shaders](https://docs.libretro.com/development/shader/glsl-shaders/). rePIU reads
-its **single-pass `.glsl`** subset.
+its **single-pass `.glsl`** subset and, since issue #90, a subset of its **multi-pass `.glslp`
+presets** (section 6).
 
 ### 2. One file, two stages
 
@@ -112,7 +132,29 @@ the same value and no scanline shows. The fixes are an asymmetric profile (the b
 the gap) or shifting the beam centre by half an output pixel. rePIU's built-in `scanline` uses the
 first and `crt` the second, confirmed in a real GL context in the Task 768 log.
 
-### 6. What rePIU does not support
+### 6. Multi-pass presets (`.glslp`)
 
-Multi-pass presets (`.glslp`), previous-frame and previous-pass inputs such as `PrevTexture` and
-`PassPrev`, LUT textures, and the Slang (`.slang`, Vulkan-family) format.
+A preset is a text file of `key = value` lines: `shaders` is the pass count, and pass i has `shaderi`
+(a path relative to the preset), `scale_typei` (`source`, `viewport`, `absolute`; `_x`/`_y` per axis),
+`scalei` (`_x`/`_y`), `filter_lineari` and `float_framebufferi`. libretro's rules: the unsuffixed key
+wins over `_x`/`_y`, a `scalei` without a scale type is ignored, and `#` outside quotes starts a
+comment. An unscaled last pass draws straight into the window. Each pass reads the one before as
+`Texture`, the original picture as `OrigTexture` and the output N passes back as `PassPrevNTexture`,
+each with `...TextureSize` and `...InputSize`. rePIU reads this subset since issue #90 (the preset
+section of the [guide](../guides/post-process-shaders.md)). Sources:
+[libretro docs: GLSL shaders](https://docs.libretro.com/development/shader/glsl-shaders/),
+[RetroArch `gfx/video_shader_parse.c`](https://github.com/libretro/RetroArch/blob/master/gfx/video_shader_parse.c).
+
+### 7. What rePIU does not support
+
+Previous-frame inputs such as `PrevTexture`, LUT textures, `srgb_framebuffer`, `wrap_mode`,
+`mipmap_input` and `alias`, the Slang (`.slang`, Vulkan-family) format, and mpv hook files (Anime4K's
+own; the built-in `anime4k` is pass files converted by hand).
+
+Many files in libretro's `glsl-shaders` open with `#version 130` and pick `in`/`out`/`texture` and
+their own `out vec4 FragColor` through `COMPAT_*` macros behind `#if __VERSION__ >= 130` (the built-in
+`scalefx`). rePIU's adapter replaces the `#version` line with the context's header (3.30 core / 3.00
+es) and adds no output of its own when the body declares a `vec4` output itself (ES refuses two
+outputs without locations), so both the GLSL 1.20 and the 1.30 style are read. Under ES, what 1.30
+allowed but ES does not, such as implicit int-to-float conversion, is an error, so such a shader is
+refused with a compile error in the browser and runs natively only.

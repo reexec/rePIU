@@ -74,6 +74,42 @@ std::string_view DropVersionLine(std::string_view text)
     return text;
 }
 
+// Whether a fragment body declares an output of its own: a line beginning
+// with `out` that declares a `vec4` (libretro's `#version 130` style,
+// `out COMPAT_PRECISION vec4 FragColor;`). Such a shader never writes
+// `gl_FragColor` in the branch the header selects, and a second output
+// without a layout location is an error in ES, so the header declares none
+// for it (issue #90).
+bool DeclaresFragmentOutput(std::string_view body)
+{
+    std::size_t line_start = 0;
+    while (line_start < body.size())
+    {
+        std::size_t line_end = body.find('\n', line_start);
+        if (line_end == std::string_view::npos)
+        {
+            line_end = body.size();
+        }
+        std::string_view line = body.substr(line_start, line_end - line_start);
+        line_start = line_end + 1U;
+        std::size_t first = 0;
+        while (first < line.size() &&
+               std::isspace(static_cast<unsigned char>(line[first])) != 0)
+        {
+            ++first;
+        }
+        line = line.substr(first);
+        if (line.size() > 3U && line.substr(0, 3) == "out" &&
+            std::isspace(static_cast<unsigned char>(line[3])) != 0 &&
+            line.find("vec4") != std::string_view::npos &&
+            line.find(';') != std::string_view::npos)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 std::string GlslHeader(bool es)
@@ -104,9 +140,12 @@ std::string AdaptLegacyGlslStage(std::string_view source, bool es,
     if (fragment)
     {
         body = ReplaceWord(body, "gl_FragColor", kFragmentOutput);
-        result.append("out vec4 ");
-        result.append(kFragmentOutput);
-        result.append(";\n");
+        if (!DeclaresFragmentOutput(body))
+        {
+            result.append("out vec4 ");
+            result.append(kFragmentOutput);
+            result.append(";\n");
+        }
     }
     result.append(body);
     return result;

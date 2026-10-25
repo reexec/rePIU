@@ -238,10 +238,13 @@ void GlideFramebufferPair::Present(std::uint32_t drawable_width,
         return;
     }
     const GLuint front = color_textures_[1U - back_];
-    if (post_process != nullptr && post_process->active())
-    {
+    // Issue #90: a chain whose target cannot be made draws nothing and drops
+    // itself, and the picture is then drawn plainly below; Apply leaves the
+    // window's framebuffer bound either way.
+    if (post_process != nullptr && post_process->active() &&
         post_process->Apply(front, rect.x, rect.y, rect.width, rect.height,
-                            logical_width, logical_height);
+                            logical_width, logical_height))
+    {
         return;
     }
     // Alpha is left as cleared, so no translucency reaches a compositor

@@ -289,19 +289,23 @@ vsync와 사운드 게인은 런처에서 바꿔 `cfg\repiu.ini`에 저장합니
 로그의 `swap interval override … applied/effective: true/1/true/1`이 확인입니다).
 
 화면 shader도 런처의 "Screen shader"에서 고릅니다(Task 768). 기본은 `none`이고, `crt`와
-`scanline`이 내장돼 있으며, `shaders\` 폴더에 libretro 단일 pass 형식의 `.glsl` 파일을 넣으면
-목록에 함께 나옵니다. 게임 중에는 `Tab` OSD에서 바꾸고 매개변수를 조절할 수 있습니다(그 실행에만
-적용). 실행 인자로는 `repiu pumpit8 --post-shader crt`(또는 `--post-shader=crt`, 롬셋 앞뒤 어디든)이고,
-환경 변수 `REPIU_POST_SHADER=crt`와 런처 설정보다 우선합니다(Task 771). 형식과 확인 절차는
+`scanline`, 그리고 업스케일러 `fsr`(AMD FSR 1), `scalefx`(픽셀아트), `anime4k`(Anime4K CNN x2 S)가 내장돼
+있으며(issue #90), `shaders\` 폴더에
+libretro 단일 pass 형식의 `.glsl` 파일이나 다단계 preset `.glslp`를 넣으면 목록에 함께 나옵니다. 게임
+중에는 `Tab` OSD에서 바꾸고 매개변수를 조절할 수 있습니다(그 실행에만 적용). 실행 인자로는
+`repiu pumpit8 --post-shader crt`(또는 `--post-shader=crt`, 롬셋 앞뒤 어디든)이고, 환경 변수
+`REPIU_POST_SHADER=crt`와 런처 설정보다 우선합니다(Task 771). 형식과 확인 절차는
 [후처리 shader 가이드](docs/guides/post-process-shaders.md)에 있습니다.
 
 *The screen shader is chosen in the launcher's "Screen shader" as well (Task 768). The default is
-`none`; `crt` and `scanline` are built in, and `.glsl` files in the libretro single-pass layout
-dropped into the `shaders\` folder join the list. In game, the `Tab` OSD switches shaders and tunes
-their parameters for that run. On the command line it is `repiu pumpit8 --post-shader crt` (or
-`--post-shader=crt`, before or after the ROM set), which wins over the environment variable
-`REPIU_POST_SHADER=crt` and the launcher setting (Task 771). The format and
-a check procedure are in the [post-processing shader guide](docs/guides/post-process-shaders.md).*
+`none`; `crt`, `scanline` and the upscalers `fsr` (AMD FSR 1), `scalefx` (pixel art) and `anime4k`
+(Anime4K CNN x2 S) are built in (issue #90), and
+`.glsl` files in the libretro single-pass layout or multi-pass `.glslp` presets dropped into the
+`shaders\` folder join the list. In game, the `Tab` OSD switches shaders and tunes their parameters
+for that run. On the command line it is `repiu pumpit8 --post-shader crt` (or `--post-shader=crt`,
+before or after the ROM set), which wins over the environment variable `REPIU_POST_SHADER=crt` and
+the launcher setting (Task 771). The format and a check procedure are in the
+[post-processing shader guide](docs/guides/post-process-shaders.md).*
 
 **텍스처 원본 정밀도(issue #37).** 게임에 내장된 그래픽 드라이버(Mesa 3.x)는 텍스처를 채널당 4bit(ARGB4444)·5/6bit(RGB565)로 잘라 하드웨어에 넘깁니다. rePIU는 드라이버가 들고 있는 원본 8bit 이미지를 찾아, 원본과 정확히 대응하는 것이 확인될 때만 대신 씁니다. 기본으로 켜져 있고, `Tab` OSD의 "Full-precision textures"나 런처의 같은 항목, `REPIU_GLIDE_TEXTURE_FULL_PRECISION=0`으로 끕니다. 끄면 아케이드 실기와 같은 화면입니다.
 

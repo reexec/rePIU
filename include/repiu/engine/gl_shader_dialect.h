@@ -28,10 +28,13 @@ enum class GlslStage
 // `#version` line is dropped for the header, and the words the newer dialect
 // removed are replaced as whole words -- `attribute` and `varying` become
 // `in`/`out`, `texture2D` becomes `texture`, and `gl_FragColor` becomes a
-// declared output. Replacing words rather than defining macros keeps clear of
-// the reserved `gl_` names. Anything else the old dialect had (`gl_TexCoord`,
-// the fixed-function matrices) still fails to compile, which the caller
-// reports as it reports any compile failure.
+// declared output -- unless the fragment body declares a `vec4` output of its
+// own, as libretro's `#version 130` shaders do behind `__VERSION__ >= 130`
+// (issue #90), since ES refuses two outputs without layout locations.
+// Replacing words rather than defining macros keeps clear of the reserved
+// `gl_` names. Anything else the old dialect had (`gl_TexCoord`, the
+// fixed-function matrices) still fails to compile, which the caller reports
+// as it reports any compile failure.
 std::string AdaptLegacyGlslStage(std::string_view source, bool es,
                                  GlslStage stage);
 

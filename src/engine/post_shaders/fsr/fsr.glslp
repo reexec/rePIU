@@ -1,0 +1,13 @@
+# rePIU built-in post-processing shader fsr (issue #90): AMD FidelityFX Super
+# Resolution 1.0. EASU upscales to the picture's size in the window, then
+# RCAS sharpens it there. Both sample exact pixel centres, so nearest.
+
+shaders = 2
+
+shader0 = easu.glsl
+filter_linear0 = false
+scale_type0 = viewport
+scale0 = 1.0
+
+shader1 = rcas.glsl
+filter_linear1 = false

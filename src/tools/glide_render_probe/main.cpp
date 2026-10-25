@@ -207,6 +207,48 @@ bool RunOpenGlPostShaderProbe()
         }
         crt_ok = crt[0] == 0U && lit > 128U;
     }
+    // Issue #90: the multi-pass upscalers. fsr is EASU into a target at the
+    // window's size and RCAS into the window; scalefx and anime4k are five
+    // passes (the first two or four through floating-point targets) and a
+    // stock pass into the window. A white picture must come back bright
+    // nearly everywhere (none of them invents detail on a flat field), and
+    // the chain must still be selected afterwards, which it is not when a
+    // pass target could not be made.
+    const struct
+    {
+        const char* id;
+        std::size_t passes;
+        std::size_t parameters;
+    } kChains[] = {{"fsr", 2U, 1U}, {"scalefx", 5U, 3U}, {"anime4k", 5U, 0U}};
+    bool chains_ok = true;
+    std::string chain_report;
+    for (const auto& chain : kChains)
+    {
+        bool ok = post.Select(chain.id) && post.active() &&
+            post.pass_count() == chain.passes &&
+            post.parameters().size() == chain.parameters;
+        std::size_t bright = 0;
+        if (ok)
+        {
+            apply(post);
+            const std::vector<std::uint8_t> red = read_red();
+            for (const std::uint8_t value : red)
+            {
+                bright += value > 200U ? 1U : 0U;
+            }
+            ok = post.active() && post.last_error().empty() &&
+                bright >= red.size() * 9U / 10U &&
+                glGetError() == GL_NO_ERROR;
+        }
+        if (!post.last_error().empty())
+        {
+            std::cerr << chain.id << ": " << post.last_error() << '\n';
+        }
+        chain_report += std::string("\npost_shader_gl_") + chain.id + "=" +
+            (ok ? "true" : "false") + " bright=" + std::to_string(bright) +
+            "/" + std::to_string(width * height);
+        chains_ok = chains_ok && ok;
+    }
     const bool none_ok = post.Select("none") && !post.active();
 
     // Task 769: a window twice as wide as the picture's ratio pillarboxes it.
@@ -319,12 +361,14 @@ bool RunOpenGlPostShaderProbe()
               << dark_rows << "/" << height
               << "\npost_shader_gl_scanline=" << (scanlines_ok ? "true" : "false")
               << "\npost_shader_gl_crt=" << (crt_ok ? "true" : "false")
+              << chain_report
               << "\npost_shader_gl_none=" << (none_ok ? "true" : "false")
               << "\nglide_letterbox_gl=" << (letterbox_ok ? "true" : "false")
               << '\n';
     return Check(state_restored, "a swap left the game's GL state changed") &&
         Check(scanlines_ok, "scanline rows did not alternate") &&
         Check(crt_ok, "crt shader did not draw as expected") &&
+        Check(chains_ok, "a multi-pass chain did not draw as expected") &&
         Check(none_ok, "none did not clear the pass") &&
         Check(letterbox_ok, "letterbox viewport or readback was wrong") &&
         Check(fullscreen_ok, "fullscreen toggle did not round-trip");

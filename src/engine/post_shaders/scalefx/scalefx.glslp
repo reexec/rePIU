@@ -1,0 +1,34 @@
+# rePIU built-in post-processing shader scalefx (issue #90): ScaleFX by Sp00kyFox,
+# the five passes of libretro's glsl-shaders edge-smoothing/scalefx, unchanged
+# (MIT; each file carries the notice). Four passes at the game's size find and
+# grade edges, the last draws at 3x with only the picture's own colours, and
+# rePIU scales that to the window.
+
+shaders = 5
+
+shader0 = scalefx-pass0.glsl
+filter_linear0 = false
+scale_type0 = source
+scale0 = 1.0
+float_framebuffer0 = true
+
+shader1 = scalefx-pass1.glsl
+filter_linear1 = false
+scale_type1 = source
+scale1 = 1.0
+float_framebuffer1 = true
+
+shader2 = scalefx-pass2.glsl
+filter_linear2 = false
+scale_type2 = source
+scale2 = 1.0
+
+shader3 = scalefx-pass3.glsl
+filter_linear3 = false
+scale_type3 = source
+scale3 = 1.0
+
+shader4 = scalefx-pass4.glsl
+filter_linear4 = false
+scale_type4 = source
+scale4 = 3.0

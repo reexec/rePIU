@@ -148,6 +148,71 @@ The test build fetches GoogleTest tag `v1.14.1` through FetchContent. GoogleTest
 offered under the BSD 3-Clause License. It links into the test executables only and is not
 part of the release packages.
 
+## AMD FidelityFX Super Resolution 1.0 (built-in `fsr` screen shader)
+
+### 한국어
+
+내장 화면 shader `fsr`(issue #90)는 AMD FidelityFX Super Resolution 1.0의 EASU(업스케일)와 RCAS(선명화) 알고리즘을
+`ffx_fsr1.h`에서 libretro 형식의 GLSL pass 둘로 옮긴 것입니다(`src/engine/post_shaders/fsr/`, re2DJ #26·#27의 파일).
+FidelityFX FSR 1.0은 MIT License로 제공되며, 각 pass 파일 머리에 고지를 둡니다. AMD의 소스 파일 자체는 포함하지 않습니다.
+
+- Project: https://github.com/GPUOpen-Effects/FidelityFX-FSR
+- License: https://github.com/GPUOpen-Effects/FidelityFX-FSR/blob/master/license.txt (MIT)
+
+### English
+
+The built-in screen shader `fsr` (issue #90) ports the EASU (upscaling) and RCAS (sharpening) algorithms of AMD
+FidelityFX Super Resolution 1.0 from `ffx_fsr1.h` into two libretro-style GLSL passes (`src/engine/post_shaders/fsr/`,
+the files of re2DJ #26 and #27). FidelityFX FSR 1.0 is offered under the MIT License, whose notice heads each pass
+file. AMD's source files themselves are not included.
+
+- Project: https://github.com/GPUOpen-Effects/FidelityFX-FSR
+- License: https://github.com/GPUOpen-Effects/FidelityFX-FSR/blob/master/license.txt (MIT)
+
+## ScaleFX (built-in `scalefx` screen shader)
+
+### 한국어
+
+내장 화면 shader `scalefx`(issue #90)는 Sp00kyFox의 ScaleFX(2017-03-01) pass 다섯 개를 libretro `glsl-shaders`의
+`edge-smoothing/scalefx`에서 **그대로** 가져온 것이고(`src/engine/post_shaders/scalefx/scalefx-pass*.glsl`), preset
+파일만 rePIU가 같은 값으로 다시 썼습니다. ScaleFX는 MIT License로 제공되며, 각 pass 파일 머리에 고지 전문을 둡니다.
+
+- Upstream: https://github.com/libretro/glsl-shaders/tree/master/edge-smoothing/scalefx
+- License: 각 pass 파일의 머리말 (MIT, Copyright (c) 2016 Sp00kyFox)
+
+### English
+
+The built-in screen shader `scalefx` (issue #90) is the five passes of Sp00kyFox's ScaleFX (2017-03-01) taken
+**unchanged** from libretro `glsl-shaders`' `edge-smoothing/scalefx` (`src/engine/post_shaders/scalefx/scalefx-pass*.glsl`);
+only the preset file was written anew by rePIU to the same values. ScaleFX is offered under the MIT License, whose
+full text heads every pass file.
+
+- Upstream: https://github.com/libretro/glsl-shaders/tree/master/edge-smoothing/scalefx
+- License: the header of each pass file (MIT, Copyright (c) 2016 Sp00kyFox)
+
+## Anime4K v3.2 (built-in `anime4k` screen shader)
+
+### 한국어
+
+내장 화면 shader `anime4k`(issue #90)는 bloc97의 Anime4K v3.2 `Anime4K_Upscale_CNN_x2_S.glsl`(mpv 훅 파일)을
+libretro 형식의 pass 다섯 개로 변환한 것입니다(`src/engine/post_shaders/anime4k/`, re2DJ #27의 파일). 신경망 가중치는
+원본 그대로이고, 표본 좌표의 y 방향만 뒤집었습니다. Anime4K는 MIT License로 제공되며, 각 pass 파일 머리에 고지 전문을
+둡니다. 실행 파일에 포함되며 게임 로직과는 무관한 표시 단계 후처리입니다.
+
+- Project: https://github.com/bloc97/Anime4K
+- License: https://github.com/bloc97/Anime4K/blob/master/LICENSE (MIT)
+
+### English
+
+The built-in screen shader `anime4k` (issue #90) is bloc97's Anime4K v3.2 `Anime4K_Upscale_CNN_x2_S.glsl` (an mpv
+hook file) converted into five libretro-style passes (`src/engine/post_shaders/anime4k/`, the files of re2DJ #27).
+The network's weights are the original's; only the sample coordinates' y direction is turned over. Anime4K is
+offered under the MIT License, whose full text heads every pass file. It is embedded in the executables as a
+presentation-only post-process unrelated to the game logic.
+
+- Project: https://github.com/bloc97/Anime4K
+- License: https://github.com/bloc97/Anime4K/blob/master/LICENSE (MIT)
+
 ## Galmuri 2.40.3 (project site font)
 
 ### 한국어

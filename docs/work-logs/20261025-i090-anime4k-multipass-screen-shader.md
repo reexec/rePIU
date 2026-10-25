@@ -39,6 +39,7 @@
   경고 2개는 이번 변경과 무관한 파일(`execution_trampoline.cpp`, `fault_handler_arch.cpp`). 두 probe는
   `if(WIN32)` 안의 대상이라 Linux에서는 컴파일까지만 확인됩니다.
 * 가이드 확인 1의 `crt` 로그 줄을 실제 형식 `(1 passes, 6 parameters)`로 고쳤습니다.
+* 실제 실행: 사용자가 게임에서 내장 업스케일러가 잘 동작하는 것을 확인했습니다(2026-10-26).
 
 ### 하지 못한 것
 
@@ -89,6 +90,7 @@ asked for `fsr` and `scalefx` of the same change (re2DJ #26 and #27) in the same
   warnings are in files this change does not touch (`execution_trampoline.cpp`, `fault_handler_arch.cpp`). Both
   probes are targets inside `if(WIN32)`, so on Linux the change is checked as far as compiling.
 * Check 1 of the guide now gives the `crt` log line in its real form, `(1 passes, 6 parameters)`.
+* A real run: the user checked in the game that the built-in upscalers work (2026-10-26).
 
 ### Not done
 

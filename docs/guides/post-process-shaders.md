@@ -98,7 +98,7 @@ shader1 = second.glsl        # 배율이 없는 마지막 pass는 창에 바로 
 
 ### 3. 확인 절차
 
-1. `REPIU_POST_SHADER=crt`로 롬셋을 실행합니다. 로그에 `[repiu-post] shader: crt (6 parameters)`.
+1. `REPIU_POST_SHADER=crt`로 롬셋을 실행합니다. 로그에 `[repiu-post] shader: crt (1 passes, 6 parameters)`.
 2. 화면이 휘고 주사선과 마스크가 보이는지 봅니다. 창 배율 2x 이상(기본 2x, `Alt+1`~`Alt+4`)에서
    주사선이 뚜렷합니다.
 3. `Tab` → Screen shader에서 `scanline`, `none`으로 바꿔 즉시 바뀌는지 확인합니다. `none`이면
@@ -174,7 +174,7 @@ screen is drawn as `none` meanwhile.
 
 ### 3. Check procedure
 
-1. Run a ROM set with `REPIU_POST_SHADER=crt`. The log shows `[repiu-post] shader: crt (6 parameters)`.
+1. Run a ROM set with `REPIU_POST_SHADER=crt`. The log shows `[repiu-post] shader: crt (1 passes, 6 parameters)`.
 2. Check for curvature, scanlines and the mask. Scanlines are clear at a 2x window scale or more
    (2x by default, `Alt+1` to `Alt+4`).
 3. `Tab` → Screen shader: switch to `scanline` and `none` and check the change is immediate. `none`

@@ -24,13 +24,27 @@
 
 ### 확인
 
-(아래에 채움)
+2026-10-26, 다른 PC에서:
+
+* Win32 Debug·Release 빌드: 오류 없음, 바뀐 파일에서 경고 없음. 이 트리는 처음에 생성 헤더
+  `post_shader_builtins.inc`가 10-05 것으로 남아 `kPostShaderBuiltinFiles`가 없다는 오류가 났고, `cmake build`로
+  다시 구성하자 17개 파일이 든 헤더가 생겨 해결됐습니다.
+* `repiu_aot_probe --post-shader`(Debug·Release): `post_shader_assembly/parameters/builtins/preset/catalog/variable`
+  모두 `true`, `post_shader_all=true`.
+* `repiu_glide_render_probe --opengl-post-shader`(Debug·Release, 실제 GL): `crt (1 passes, 6 parameters)`,
+  `fsr (2 passes, 1 parameters)`, `scalefx (5 passes, 3 parameters)`, `anime4k (5 passes, 0 parameters)`;
+  `post_shader_gl_fsr/scalefx/anime4k=true bright=12288/12288`, `scanline`·`crt`·`none`·`state_restored`·`letterbox`·
+  전체 화면 전환 모두 `true`, `glide_render_probe=pass`. 인자 없는 실행도 `pass`.
+* Linux x64 Debug(WSL Ubuntu 24.04, `scripts/build_linux_x64.sh --build-dir build/linux_x64_debug`): 빌드 성공,
+  경고 2개는 이번 변경과 무관한 파일(`execution_trampoline.cpp`, `fault_handler_arch.cpp`). 두 probe는
+  `if(WIN32)` 안의 대상이라 Linux에서는 컴파일까지만 확인됩니다.
+* 가이드 확인 1의 `crt` 로그 줄을 실제 형식 `(1 passes, 6 parameters)`로 고쳤습니다.
 
 ### 하지 못한 것
 
-* WSL(Ubuntu 24.04)에 cmake·gcc·emsdk가 없어 Linux x64와 웹 빌드는 이 PC에서 돌리지 못했습니다. 코드는 GL 3.3
-  core / ES 3.0 공용 부분집합만 쓰고(`GlApi`의 FBO·텍스처 호출, `AdaptLegacyGlslStage`), 플랫폼 분기가 없습니다.
-  브라우저에서 세 preset의 ES 컴파일과 `RGBA16F` 대상 완성은 다음 웹 빌드에서 확인할 항목입니다.
+* 이 PC의 WSL에는 emsdk가 없어 웹 빌드는 돌리지 못했습니다. 코드는 GL 3.3 core / ES 3.0 공용 부분집합만
+  쓰고(`GlApi`의 FBO·텍스처 호출, `AdaptLegacyGlslStage`), 플랫폼 분기가 없습니다. 브라우저에서 세 preset의 ES
+  컴파일과 `RGBA16F` 대상 완성은 다음 웹 빌드에서 확인할 항목입니다.
 
 ---
 
@@ -60,11 +74,24 @@ asked for `fsr` and `scalefx` of the same change (re2DJ #26 and #27) in the same
 
 ### Checks
 
-(filled in below)
+2026-10-26, on another PC:
+
+* Win32 Debug and Release builds: no errors, no warnings from the changed files. At first this tree still had the
+  generated `post_shader_builtins.inc` of 10-05, so `kPostShaderBuiltinFiles` was missing; reconfiguring with
+  `cmake build` wrote the header with its 17 files and the build went through.
+* `repiu_aot_probe --post-shader` (Debug and Release): `post_shader_assembly/parameters/builtins/preset/catalog/variable`
+  all `true`, `post_shader_all=true`.
+* `repiu_glide_render_probe --opengl-post-shader` (Debug and Release, a real GL): `crt (1 passes, 6 parameters)`,
+  `fsr (2 passes, 1 parameters)`, `scalefx (5 passes, 3 parameters)`, `anime4k (5 passes, 0 parameters)`;
+  `post_shader_gl_fsr/scalefx/anime4k=true bright=12288/12288`, and `scanline`, `crt`, `none`, `state_restored`,
+  `letterbox` and the fullscreen toggle all `true`; `glide_render_probe=pass`. The run with no argument passes too.
+* Linux x64 Debug (WSL Ubuntu 24.04, `scripts/build_linux_x64.sh --build-dir build/linux_x64_debug`): builds; its two
+  warnings are in files this change does not touch (`execution_trampoline.cpp`, `fault_handler_arch.cpp`). Both
+  probes are targets inside `if(WIN32)`, so on Linux the change is checked as far as compiling.
+* Check 1 of the guide now gives the `crt` log line in its real form, `(1 passes, 6 parameters)`.
 
 ### Not done
 
-* WSL (Ubuntu 24.04) has no cmake, gcc or emsdk, so the Linux x64 and web builds could not be run on this PC. The
-  code uses only the shared GL 3.3 core / ES 3.0 subset (`GlApi`'s framebuffer and texture calls,
+* This PC's WSL has no emsdk, so the web build could not be run. The code uses only the shared GL 3.3 core / ES 3.0 subset (`GlApi`'s framebuffer and texture calls,
   `AdaptLegacyGlslStage`) and has no platform branch. The ES compile of the three presets and the completeness of
   `RGBA16F` targets in a browser are items for the next web build.
